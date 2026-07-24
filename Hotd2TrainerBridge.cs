@@ -1,20 +1,26 @@
 using BepInEx;
+using HarmonyLib;
 using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Reflection;
 using System.Threading;
 
-[BepInPlugin("local.hotd2remake.trainerbridge", "HotD2 Remake Trainer Bridge", "1.0.0")]
+[BepInPlugin("local.hotd2remake.trainerbridge", "HotD2 Remake Trainer Bridge", "1.1.0")]
 public sealed class Hotd2TrainerBridge : BaseUnityPlugin
 {
     private const string PipeName = "Hotd2RemakeTrainer";
     private const BindingFlags StaticField =
         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+    private const BindingFlags AnyInstance =
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+    private static int turboEnabled;
 
     private readonly object pipeLock = new object();
     private Thread pipeThread;
     private NamedPipeServerStream pipe;
+    private Harmony harmony;
     private volatile bool running;
     private int dirty;
     private int desiredGodMode;
@@ -56,6 +62,7 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         originalAmmo = Read(ammoField);
         originalContinues = Read(continuesField);
         originalAllCheats = Read(allCheatsField);
+        TryPatchTurbo();
 
         running = true;
         pipeThread = new Thread(PipeLoop);
@@ -63,6 +70,33 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         pipeThread.Name = "HotD2 Trainer Pipe";
         pipeThread.Start();
         Logger.LogInfo("Trainer bridge ready on pipe " + PipeName + ".");
+    }
+
+    private void TryPatchTurbo()
+    {
+        Type holder = FindType("CR_WeaponHolder");
+        PropertyInfo property = holder == null
+            ? null
+            : holder.GetProperty("HasAutoFire", AnyInstance);
+        MethodInfo getter = property == null ? null : property.GetGetMethod(true);
+        MethodInfo postfix = typeof(Hotd2TrainerBridge).GetMethod(
+            "ForceAutoFire",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        if (getter == null || postfix == null)
+        {
+            Logger.LogError("Trainer bridge: CR_WeaponHolder.HasAutoFire not found; Turbo unavailable.");
+            return;
+        }
+
+        harmony = new Harmony("local.hotd2remake.trainerbridge.turbo");
+        harmony.Patch(getter, postfix: new HarmonyMethod(postfix));
+        Logger.LogInfo("Trainer bridge: Turbo fire patch ready.");
+    }
+
+    private static void ForceAutoFire(ref bool __result)
+    {
+        if (Interlocked.CompareExchange(ref turboEnabled, 0, 0) != 0)
+            __result = true;
     }
 
     private void Update()
@@ -89,6 +123,10 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private void OnDestroy()
     {
         running = false;
+        Interlocked.Exchange(ref turboEnabled, 0);
+        if (harmony != null)
+            harmony.UnpatchSelf();
+
         lock (pipeLock)
         {
             if (pipe != null)
@@ -152,15 +190,19 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         int godMode;
         int ammo;
         int continues;
-        if (parts.Length != 4 || parts[0] != "STATE" ||
+        int turbo = 0;
+        if ((parts.Length != 4 && parts.Length != 5) ||
+            parts[0] != "STATE" ||
             !Int32.TryParse(parts[1], out godMode) ||
             !Int32.TryParse(parts[2], out ammo) ||
-            !Int32.TryParse(parts[3], out continues))
+            !Int32.TryParse(parts[3], out continues) ||
+            (parts.Length == 5 && !Int32.TryParse(parts[4], out turbo)))
             return;
 
         Interlocked.Exchange(ref desiredGodMode, godMode == 0 ? 0 : 1);
         Interlocked.Exchange(ref desiredAmmo, ammo == 0 ? 0 : 1);
         Interlocked.Exchange(ref desiredContinues, continues == 0 ? 0 : 1);
+        Interlocked.Exchange(ref turboEnabled, turbo == 0 ? 0 : 1);
         Interlocked.Exchange(ref dirty, 1);
     }
 

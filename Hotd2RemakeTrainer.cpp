@@ -6,6 +6,7 @@
 #include <shellapi.h>
 
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 
 namespace {
@@ -19,12 +20,14 @@ enum ControlId {
     GodModeCheckbox = 1001,
     AmmoCheckbox,
     ContinuesCheckbox,
+    TurboCheckbox,
 };
 
 HWND gStatus = nullptr;
 HWND gGodMode = nullptr;
 HWND gAmmo = nullptr;
 HWND gContinues = nullptr;
+HWND gTurbo = nullptr;
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 
 void SetStatus(const wchar_t* text) {
@@ -63,20 +66,37 @@ bool IsChecked(HWND checkbox) {
     return SendMessageW(checkbox, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
-bool SendState(bool godMode, bool ammo, bool continues) {
+int FormatStateCommand(
+    char* command,
+    std::size_t size,
+    bool godMode,
+    bool ammo,
+    bool continues,
+    bool turbo) {
+    return std::snprintf(
+        command,
+        size,
+        "STATE %d %d %d %d\n",
+        godMode ? 1 : 0,
+        ammo ? 1 : 0,
+        continues ? 1 : 0,
+        turbo ? 1 : 0);
+}
+
+bool SendState(bool godMode, bool ammo, bool continues, bool turbo) {
     if (gPipe == INVALID_HANDLE_VALUE) {
         return false;
     }
 
     char command[32]{};
-    const int length = std::snprintf(
+    const int length = FormatStateCommand(
         command,
         sizeof(command),
-        "STATE %d %d %d\n",
-        godMode ? 1 : 0,
-        ammo ? 1 : 0,
-        continues ? 1 : 0);
-    if (length <= 0) {
+        godMode,
+        ammo,
+        continues,
+        turbo);
+    if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(command)) {
         return false;
     }
 
@@ -94,7 +114,8 @@ bool SendCurrentState() {
     return SendState(
         IsChecked(gGodMode),
         IsChecked(gAmmo),
-        IsChecked(gContinues));
+        IsChecked(gContinues),
+        IsChecked(gTurbo));
 }
 
 bool Connect() {
@@ -166,11 +187,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gGodMode = AddCheckbox(window, L"Infinite Health", 58, GodModeCheckbox);
         gAmmo = AddCheckbox(window, L"Infinite Ammo", 92, AmmoCheckbox);
         gContinues = AddCheckbox(window, L"Infinite Continues", 126, ContinuesCheckbox);
+        gTurbo = AddCheckbox(window, L"Turbo / Continuous Fire", 160, TurboCheckbox);
 
         SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gGodMode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gAmmo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gContinues, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gTurbo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
@@ -188,7 +211,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     case WM_DESTROY:
         KillTimer(window, kTimerId);
-        SendState(false, false, false);
+        SendState(false, false, false, false);
         Disconnect();
         PostQuitMessage(0);
         return 0;
@@ -198,8 +221,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 }
 
 bool SelfTest() {
+    char command[32]{};
+    const int length = FormatStateCommand(
+        command, sizeof(command), true, false, true, true);
     return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
-           _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0;
+           _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
+           length == 14 &&
+           std::strcmp(command, "STATE 1 0 1 1\n") == 0;
 }
 
 bool HasSelfTestArgument() {
@@ -254,7 +282,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         410,
-        220,
+        255,
         nullptr,
         nullptr,
         instance,

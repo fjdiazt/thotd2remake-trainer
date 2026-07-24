@@ -5,6 +5,10 @@ Portable Windows GUI for:
 - Infinite Health
 - Infinite Ammo
 - Infinite Continues (the game's Unlimited Tokens cheat)
+- Turbo / Continuous Fire
+
+Turbo uses the game's native held-fire loop and each weapon's native fire
+rate. Ammo, reload, sound, recoil, and input blocking remain game-controlled.
 
 The GUI talks to a small BepInEx bridge. It uses the Remake's built-in
 `CR_Cheats` state instead of fragile raw memory offsets.

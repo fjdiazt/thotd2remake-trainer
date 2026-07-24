@@ -14,6 +14,10 @@
       <HintPath>$(GameRoot)\BepInEx\core\BepInEx.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameRoot)\BepInEx\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine">
       <HintPath>$(GameRoot)\THE HOUSE OF THE DEAD 2 Remake_Data\Managed\UnityEngine.dll</HintPath>
       <Private>false</Private>
