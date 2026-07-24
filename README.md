@@ -1,0 +1,36 @@
+# HotD2 Remake Trainer
+
+Portable Windows GUI for:
+
+- Infinite Health
+- Infinite Ammo
+- Infinite Continues (the game's Unlimited Tokens cheat)
+
+The GUI talks to a small BepInEx bridge. It uses the Remake's built-in
+`CR_Cheats` state instead of fragile raw memory offsets.
+
+## Build
+
+```powershell
+.\build.ps1
+```
+
+Outputs:
+
+- `dist\Hotd2RemakeTrainer.exe`
+- `dist\Hotd2TrainerBridge.dll`
+
+Build and copy the bridge into the installed game:
+
+```powershell
+.\build.ps1 -Deploy
+```
+
+## Run
+
+1. Enable the existing BepInEx loader by restoring the game's
+   `winhttp.dll` filename.
+2. Restart the game.
+3. Run `dist\Hotd2RemakeTrainer.exe`.
+
+No Cheat Engine required.

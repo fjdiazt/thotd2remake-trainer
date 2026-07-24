@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Hotd2TrainerBridge</AssemblyName>
+    <RootNamespace>Hotd2TrainerBridge</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>none</DebugType>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <GameRoot Condition="'$(GameRoot)' == ''">S:\SteamLibrary\steamapps\common\THE HOUSE OF THE DEAD 2 Remake</GameRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Hotd2TrainerBridge.cs" />
+    <Reference Include="BepInEx">
+      <HintPath>$(GameRoot)\BepInEx\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameRoot)\THE HOUSE OF THE DEAD 2 Remake_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameRoot)\THE HOUSE OF THE DEAD 2 Remake_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
