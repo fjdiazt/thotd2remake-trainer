@@ -20,7 +20,10 @@ enum ControlId {
     GodModeCheckbox = 1001,
     AmmoCheckbox,
     ContinuesCheckbox,
-    TurboCheckbox,
+    OneShotCheckbox,
+    FireOffRadio,
+    AutoFireRadio,
+    RapidFireRadio,
     PersistCheckbox,
 };
 
@@ -28,7 +31,11 @@ HWND gStatus = nullptr;
 HWND gGodMode = nullptr;
 HWND gAmmo = nullptr;
 HWND gContinues = nullptr;
-HWND gTurbo = nullptr;
+HWND gOneShot = nullptr;
+HWND gFireGroup = nullptr;
+HWND gFireOff = nullptr;
+HWND gAutoFire = nullptr;
+HWND gRapidFire = nullptr;
 HWND gPersist = nullptr;
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 bool gLocalStatePending = false;
@@ -75,17 +82,21 @@ int FormatStateCommand(
     bool godMode,
     bool ammo,
     bool continues,
-    bool turbo,
-    bool persist) {
+    bool autoFire,
+    bool persist,
+    bool rapidFire,
+    bool oneShot) {
     return std::snprintf(
         command,
         size,
-        "STATE %d %d %d %d %d\n",
+        "STATE %d %d %d %d %d %d %d\n",
         godMode ? 1 : 0,
         ammo ? 1 : 0,
         continues ? 1 : 0,
-        turbo ? 1 : 0,
-        persist ? 1 : 0);
+        autoFire ? 1 : 0,
+        persist ? 1 : 0,
+        rapidFire ? 1 : 0,
+        oneShot ? 1 : 0);
 }
 
 bool ParseStateCommand(
@@ -93,19 +104,23 @@ bool ParseStateCommand(
     bool& godMode,
     bool& ammo,
     bool& continues,
-    bool& turbo,
-    bool& persist) {
-    int values[5]{};
+    bool& autoFire,
+    bool& persist,
+    bool& rapidFire,
+    bool& oneShot) {
+    int values[7]{};
     int consumed = 0;
     if (sscanf_s(
             command,
-            "STATE %d %d %d %d %d%n",
+            "STATE %d %d %d %d %d %d %d%n",
             &values[0],
             &values[1],
             &values[2],
             &values[3],
             &values[4],
-            &consumed) != 5) {
+            &values[5],
+            &values[6],
+            &consumed) != 7) {
         return false;
     }
 
@@ -113,6 +128,9 @@ bool ParseStateCommand(
         if (value != 0 && value != 1) {
             return false;
         }
+    }
+    if (values[3] != 0 && values[5] != 0) {
+        return false;
     }
     for (const char* rest = command + consumed; *rest; ++rest) {
         if (*rest != '\r' && *rest != '\n') {
@@ -123,8 +141,10 @@ bool ParseStateCommand(
     godMode = values[0] != 0;
     ammo = values[1] != 0;
     continues = values[2] != 0;
-    turbo = values[3] != 0;
+    autoFire = values[3] != 0;
     persist = values[4] != 0;
+    rapidFire = values[5] != 0;
+    oneShot = values[6] != 0;
     return true;
 }
 
@@ -132,21 +152,25 @@ bool SendState(
     bool godMode,
     bool ammo,
     bool continues,
-    bool turbo,
-    bool persist) {
+    bool autoFire,
+    bool persist,
+    bool rapidFire,
+    bool oneShot) {
     if (gPipe == INVALID_HANDLE_VALUE) {
         return false;
     }
 
-    char command[32]{};
+    char command[40]{};
     const int length = FormatStateCommand(
         command,
         sizeof(command),
         godMode,
         ammo,
         continues,
-        turbo,
-        persist);
+        autoFire,
+        persist,
+        rapidFire,
+        oneShot);
     if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(command)) {
         return false;
     }
@@ -166,8 +190,10 @@ bool SendCurrentState() {
         IsChecked(gGodMode),
         IsChecked(gAmmo),
         IsChecked(gContinues),
-        IsChecked(gTurbo),
-        IsChecked(gPersist));
+        IsChecked(gAutoFire),
+        IsChecked(gPersist),
+        IsChecked(gRapidFire),
+        IsChecked(gOneShot));
 }
 
 bool ReceiveCurrentState(bool applyState) {
@@ -197,10 +223,19 @@ bool ReceiveCurrentState(bool applyState) {
     bool godMode = false;
     bool ammo = false;
     bool continues = false;
-    bool turbo = false;
+    bool autoFire = false;
     bool persist = false;
+    bool rapidFire = false;
+    bool oneShot = false;
     if (!ParseStateCommand(
-            response, godMode, ammo, continues, turbo, persist)) {
+            response,
+            godMode,
+            ammo,
+            continues,
+            autoFire,
+            persist,
+            rapidFire,
+            oneShot)) {
         return false;
     }
 
@@ -212,7 +247,17 @@ bool ReceiveCurrentState(bool applyState) {
     SendMessageW(gAmmo, BM_SETCHECK, ammo ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(
         gContinues, BM_SETCHECK, continues ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(gTurbo, BM_SETCHECK, turbo ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gOneShot, BM_SETCHECK, oneShot ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gFireOff,
+        BM_SETCHECK,
+        !autoFire && !rapidFire ? BST_CHECKED : BST_UNCHECKED,
+        0);
+    SendMessageW(
+        gAutoFire, BM_SETCHECK, autoFire ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gRapidFire, BM_SETCHECK, rapidFire ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(
         gPersist, BM_SETCHECK, persist ? BST_CHECKED : BST_UNCHECKED, 0);
     return true;
@@ -275,6 +320,24 @@ HWND AddCheckbox(HWND parent, const wchar_t* text, int y, int id) {
         nullptr);
 }
 
+HWND AddRadio(
+    HWND parent, const wchar_t* text, int y, int id, bool first) {
+    return CreateWindowExW(
+        0,
+        L"BUTTON",
+        text,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON |
+            (first ? WS_GROUP : 0),
+        40,
+        y,
+        310,
+        24,
+        parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+        GetModuleHandleW(nullptr),
+        nullptr);
+}
+
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE: {
@@ -295,19 +358,42 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gGodMode = AddCheckbox(window, L"Infinite Health", 58, GodModeCheckbox);
         gAmmo = AddCheckbox(window, L"Infinite Ammo", 92, AmmoCheckbox);
         gContinues = AddCheckbox(window, L"Infinite Continues", 126, ContinuesCheckbox);
-        gTurbo = AddCheckbox(window, L"Turbo / Continuous Fire", 160, TurboCheckbox);
+        gOneShot = AddCheckbox(window, L"One Shot Mode", 160, OneShotCheckbox);
+        gFireGroup = CreateWindowExW(
+            0,
+            L"BUTTON",
+            L"Fire mode",
+            WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+            24,
+            194,
+            350,
+            100,
+            window,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        gFireOff = AddRadio(window, L"Off", 216, FireOffRadio, true);
+        gAutoFire = AddRadio(
+            window, L"Auto Fire (native max)", 242, AutoFireRadio, false);
+        gRapidFire = AddRadio(
+            window, L"Rapid Fire (8 shots/sec)", 268, RapidFireRadio, false);
         gPersist = AddCheckbox(
             window,
             L"Remember cheats across game restarts",
-            194,
+            304,
             PersistCheckbox);
 
         SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gGodMode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gAmmo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gContinues, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gTurbo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gOneShot, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gFireGroup, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gFireOff, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gAutoFire, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gRapidFire, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gPersist, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gFireOff, BM_SETCHECK, BST_CHECKED, 0);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
@@ -329,7 +415,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_DESTROY:
         KillTimer(window, kTimerId);
         if (!IsChecked(gPersist)) {
-            SendState(false, false, false, false, false);
+            SendState(false, false, false, false, false, false, false);
         }
         Disconnect();
         PostQuitMessage(0);
@@ -340,28 +426,40 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 }
 
 bool SelfTest() {
-    char command[32]{};
+    char command[40]{};
     const int length = FormatStateCommand(
-        command, sizeof(command), true, false, true, true, true);
+        command, sizeof(command), true, false, true, true, true, false, true);
     bool godMode = false;
     bool ammo = false;
     bool continues = false;
-    bool turbo = false;
+    bool autoFire = false;
     bool persist = false;
+    bool rapidFire = false;
+    bool oneShot = false;
     return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
-           length == 16 &&
-           std::strcmp(command, "STATE 1 0 1 1 1\n") == 0 &&
+           length == 20 &&
+           std::strcmp(command, "STATE 1 0 1 1 1 0 1\n") == 0 &&
            ParseStateCommand(
-               command, godMode, ammo, continues, turbo, persist) &&
-           godMode && !ammo && continues && turbo && persist &&
-           !ParseStateCommand(
-               "STATE 1 0 1 1 2\n",
+               command,
                godMode,
                ammo,
                continues,
-               turbo,
-               persist);
+               autoFire,
+               persist,
+               rapidFire,
+               oneShot) &&
+           godMode && !ammo && continues && autoFire && persist &&
+           !rapidFire && oneShot &&
+           !ParseStateCommand(
+               "STATE 1 0 1 1 1 1 1\n",
+               godMode,
+               ammo,
+               continues,
+               autoFire,
+               persist,
+               rapidFire,
+               oneShot);
 }
 
 bool HasSelfTestArgument() {
@@ -416,7 +514,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         410,
-        289,
+        389,
         nullptr,
         nullptr,
         instance,

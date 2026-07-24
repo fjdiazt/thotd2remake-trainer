@@ -5,18 +5,21 @@ Portable Windows GUI for:
 - Infinite Health
 - Infinite Ammo
 - Infinite Continues (the game's Unlimited Tokens cheat)
-- Turbo / Continuous Fire
+- One Shot Mode
+- Auto Fire (native max)
+- Rapid Fire (8 shots/sec)
 
-Turbo uses the game's native held-fire loop and each weapon's native fire
-rate. Ammo, reload, sound, recoil, and input blocking remain game-controlled.
+Auto Fire uses the game's built-in held-fire loop. Rapid Fire repeats the
+normal trigger path at a human mechanical rate. Both modes leave ammo, reload,
+sound, recoil, input blocking, and native weapon cooldowns game-controlled.
 
 The GUI talks to a small BepInEx bridge. It uses the Remake's built-in
 `CR_Cheats` state instead of fragile raw memory offsets.
 
-Enable `Remember cheats across game restarts` to store all toggle states in
-the bridge. The game restores them without opening the GUI. Reopening the GUI
-synchronizes every checkbox from the bridge. With persistence disabled,
-closing the GUI turns all cheats off.
+Enable `Remember cheats across game restarts` to store all cheat and fire-mode
+states in the bridge. The game restores them without opening the GUI.
+Reopening the GUI synchronizes every control from the bridge. With persistence
+disabled, closing the GUI turns all cheats off.
 
 ## Build
 
