@@ -13,6 +13,11 @@ rate. Ammo, reload, sound, recoil, and input blocking remain game-controlled.
 The GUI talks to a small BepInEx bridge. It uses the Remake's built-in
 `CR_Cheats` state instead of fragile raw memory offsets.
 
+Enable `Remember cheats across game restarts` to store all toggle states in
+the bridge. The game restores them without opening the GUI. Reopening the GUI
+synchronizes every checkbox from the bridge. With persistence disabled,
+closing the GUI turns all cheats off.
+
 ## Build
 
 ```powershell

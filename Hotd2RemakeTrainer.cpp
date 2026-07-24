@@ -21,6 +21,7 @@ enum ControlId {
     AmmoCheckbox,
     ContinuesCheckbox,
     TurboCheckbox,
+    PersistCheckbox,
 };
 
 HWND gStatus = nullptr;
@@ -28,6 +29,7 @@ HWND gGodMode = nullptr;
 HWND gAmmo = nullptr;
 HWND gContinues = nullptr;
 HWND gTurbo = nullptr;
+HWND gPersist = nullptr;
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 
 void SetStatus(const wchar_t* text) {
@@ -72,18 +74,65 @@ int FormatStateCommand(
     bool godMode,
     bool ammo,
     bool continues,
-    bool turbo) {
+    bool turbo,
+    bool persist) {
     return std::snprintf(
         command,
         size,
-        "STATE %d %d %d %d\n",
+        "STATE %d %d %d %d %d\n",
         godMode ? 1 : 0,
         ammo ? 1 : 0,
         continues ? 1 : 0,
-        turbo ? 1 : 0);
+        turbo ? 1 : 0,
+        persist ? 1 : 0);
 }
 
-bool SendState(bool godMode, bool ammo, bool continues, bool turbo) {
+bool ParseStateCommand(
+    const char* command,
+    bool& godMode,
+    bool& ammo,
+    bool& continues,
+    bool& turbo,
+    bool& persist) {
+    int values[5]{};
+    int consumed = 0;
+    if (sscanf_s(
+            command,
+            "STATE %d %d %d %d %d%n",
+            &values[0],
+            &values[1],
+            &values[2],
+            &values[3],
+            &values[4],
+            &consumed) != 5) {
+        return false;
+    }
+
+    for (int value : values) {
+        if (value != 0 && value != 1) {
+            return false;
+        }
+    }
+    for (const char* rest = command + consumed; *rest; ++rest) {
+        if (*rest != '\r' && *rest != '\n') {
+            return false;
+        }
+    }
+
+    godMode = values[0] != 0;
+    ammo = values[1] != 0;
+    continues = values[2] != 0;
+    turbo = values[3] != 0;
+    persist = values[4] != 0;
+    return true;
+}
+
+bool SendState(
+    bool godMode,
+    bool ammo,
+    bool continues,
+    bool turbo,
+    bool persist) {
     if (gPipe == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -95,7 +144,8 @@ bool SendState(bool godMode, bool ammo, bool continues, bool turbo) {
         godMode,
         ammo,
         continues,
-        turbo);
+        turbo,
+        persist);
     if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(command)) {
         return false;
     }
@@ -115,19 +165,71 @@ bool SendCurrentState() {
         IsChecked(gGodMode),
         IsChecked(gAmmo),
         IsChecked(gContinues),
-        IsChecked(gTurbo));
+        IsChecked(gTurbo),
+        IsChecked(gPersist));
+}
+
+bool ReceiveCurrentState() {
+    DWORD available = 0;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        if (!PeekNamedPipe(gPipe, nullptr, 0, nullptr, &available, nullptr)) {
+            return false;
+        }
+        if (available != 0) {
+            break;
+        }
+        Sleep(10);
+    }
+    if (available == 0) {
+        return false;
+    }
+
+    char response[64]{};
+    const DWORD capacity = static_cast<DWORD>(sizeof(response) - 1);
+    const DWORD toRead = available < capacity ? available : capacity;
+    DWORD read = 0;
+    if (!ReadFile(gPipe, response, toRead, &read, nullptr) || read == 0) {
+        return false;
+    }
+    response[read] = '\0';
+
+    bool godMode = false;
+    bool ammo = false;
+    bool continues = false;
+    bool turbo = false;
+    bool persist = false;
+    if (!ParseStateCommand(
+            response, godMode, ammo, continues, turbo, persist)) {
+        return false;
+    }
+
+    SendMessageW(gGodMode, BM_SETCHECK, godMode ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(gAmmo, BM_SETCHECK, ammo ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gContinues, BM_SETCHECK, continues ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(gTurbo, BM_SETCHECK, turbo ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gPersist, BM_SETCHECK, persist ? BST_CHECKED : BST_UNCHECKED, 0);
+    return true;
 }
 
 bool Connect() {
     gPipe = CreateFileW(
         kPipePath,
-        GENERIC_WRITE,
+        GENERIC_READ | GENERIC_WRITE,
         0,
         nullptr,
         OPEN_EXISTING,
         0,
         nullptr);
-    return gPipe != INVALID_HANDLE_VALUE;
+    if (gPipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    if (!ReceiveCurrentState()) {
+        Disconnect();
+        return false;
+    }
+    return true;
 }
 
 void Tick() {
@@ -159,7 +261,7 @@ HWND AddCheckbox(HWND parent, const wchar_t* text, int y, int id) {
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
         24,
         y,
-        330,
+        350,
         28,
         parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
@@ -188,12 +290,18 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gAmmo = AddCheckbox(window, L"Infinite Ammo", 92, AmmoCheckbox);
         gContinues = AddCheckbox(window, L"Infinite Continues", 126, ContinuesCheckbox);
         gTurbo = AddCheckbox(window, L"Turbo / Continuous Fire", 160, TurboCheckbox);
+        gPersist = AddCheckbox(
+            window,
+            L"Remember cheats across game restarts",
+            194,
+            PersistCheckbox);
 
         SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gGodMode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gAmmo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gContinues, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gTurbo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(gPersist, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
@@ -211,7 +319,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     case WM_DESTROY:
         KillTimer(window, kTimerId);
-        SendState(false, false, false, false);
+        if (!IsChecked(gPersist)) {
+            SendState(false, false, false, false, false);
+        }
         Disconnect();
         PostQuitMessage(0);
         return 0;
@@ -223,11 +333,26 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 bool SelfTest() {
     char command[32]{};
     const int length = FormatStateCommand(
-        command, sizeof(command), true, false, true, true);
+        command, sizeof(command), true, false, true, true, true);
+    bool godMode = false;
+    bool ammo = false;
+    bool continues = false;
+    bool turbo = false;
+    bool persist = false;
     return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
-           length == 14 &&
-           std::strcmp(command, "STATE 1 0 1 1\n") == 0;
+           length == 16 &&
+           std::strcmp(command, "STATE 1 0 1 1 1\n") == 0 &&
+           ParseStateCommand(
+               command, godMode, ammo, continues, turbo, persist) &&
+           godMode && !ammo && continues && turbo && persist &&
+           !ParseStateCommand(
+               "STATE 1 0 1 1 2\n",
+               godMode,
+               ammo,
+               continues,
+               turbo,
+               persist);
 }
 
 bool HasSelfTestArgument() {
@@ -282,7 +407,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         410,
-        255,
+        289,
         nullptr,
         nullptr,
         instance,
