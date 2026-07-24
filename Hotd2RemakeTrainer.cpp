@@ -31,6 +31,7 @@ HWND gContinues = nullptr;
 HWND gTurbo = nullptr;
 HWND gPersist = nullptr;
 HANDLE gPipe = INVALID_HANDLE_VALUE;
+bool gLocalStatePending = false;
 
 void SetStatus(const wchar_t* text) {
     SetWindowTextW(gStatus, text);
@@ -169,7 +170,7 @@ bool SendCurrentState() {
         IsChecked(gPersist));
 }
 
-bool ReceiveCurrentState() {
+bool ReceiveCurrentState(bool applyState) {
     DWORD available = 0;
     for (int attempt = 0; attempt < 100; ++attempt) {
         if (!PeekNamedPipe(gPipe, nullptr, 0, nullptr, &available, nullptr)) {
@@ -203,6 +204,10 @@ bool ReceiveCurrentState() {
         return false;
     }
 
+    if (!applyState) {
+        return true;
+    }
+
     SendMessageW(gGodMode, BM_SETCHECK, godMode ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(gAmmo, BM_SETCHECK, ammo ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(
@@ -225,7 +230,7 @@ bool Connect() {
     if (gPipe == INVALID_HANDLE_VALUE) {
         return false;
     }
-    if (!ReceiveCurrentState()) {
+    if (!ReceiveCurrentState(!gLocalStatePending)) {
         Disconnect();
         return false;
     }
@@ -250,6 +255,7 @@ void Tick() {
         return;
     }
 
+    gLocalStatePending = false;
     SetStatus(L"Connected to Remake");
 }
 
@@ -314,6 +320,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     case WM_COMMAND:
         if (HIWORD(wParam) == BN_CLICKED) {
+            if (gPipe == INVALID_HANDLE_VALUE) {
+                gLocalStatePending = true;
+            }
             Tick();
         }
         return 0;
