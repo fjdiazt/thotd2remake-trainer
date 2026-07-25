@@ -61,7 +61,7 @@ $trainerObject = Join-Path $obj 'Hotd2RemakeTrainer.obj'
 & $cl /nologo /std:c++17 /O2 /MT /W4 /EHsc `
     "/Fo:$trainerObject" "/Fe:$trainerOutput" $trainerSource `
     /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF `
-    user32.lib kernel32.lib shell32.lib gdi32.lib
+    user32.lib kernel32.lib shell32.lib gdi32.lib comctl32.lib
 if ($LASTEXITCODE -ne 0) {
     throw "Trainer build failed with exit code $LASTEXITCODE."
 }

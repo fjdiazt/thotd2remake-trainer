@@ -10,12 +10,13 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 
-[BepInPlugin("local.hotd2remake.trainerbridge", "HotD2 Remake Trainer Bridge", "1.3.0")]
+[BepInPlugin("local.hotd2remake.trainerbridge", "HotD2 Remake Trainer Bridge", "1.4.0")]
 public sealed class Hotd2TrainerBridge : BaseUnityPlugin
 {
     private const string PipeName = "Hotd2RemakeTrainer";
-    // ponytail: fixed human-rate cap; add tuning only if one cadence proves insufficient.
-    private const double RapidFireSeconds = 0.125;
+    private const int MinRapidFireRate = 2;
+    private const int MaxRapidFireRate = 16;
+    private const int DefaultRapidFireRate = 8;
     private const BindingFlags StaticField =
         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     private const BindingFlags AnyInstance =
@@ -29,10 +30,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private static readonly ConditionalWeakTable<object, RapidFireClock>
         RapidFireClocks =
             new ConditionalWeakTable<object, RapidFireClock>();
-    private static readonly long RapidFireIntervalTicks =
-        Math.Max(1L, (long)(Stopwatch.Frequency * RapidFireSeconds));
     private static int autoFireEnabled;
     private static int rapidFireEnabled;
+    private static int rapidFireRate = DefaultRapidFireRate;
     private static FieldInfo playerInputField;
     private static PropertyInfo isHoldingFireProperty;
     private static MethodInfo playerFireMethod;
@@ -68,6 +68,7 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private ConfigEntry<bool> continuesConfig;
     private ConfigEntry<bool> autoFireConfig;
     private ConfigEntry<bool> rapidFireConfig;
+    private ConfigEntry<int> rapidFireRateConfig;
     private ConfigEntry<bool> oneShotConfig;
 
     private void Awake()
@@ -118,6 +119,10 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         continuesConfig = Config.Bind("Cheats", "InfiniteContinues", false);
         autoFireConfig = Config.Bind("Cheats", "Turbo", false);
         rapidFireConfig = Config.Bind("Cheats", "RapidFire", false);
+        rapidFireRateConfig = Config.Bind(
+            "Cheats",
+            "RapidFireRate",
+            DefaultRapidFireRate);
         oneShotConfig = Config.Bind("Cheats", "OneShot", false);
     }
 
@@ -136,6 +141,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         Interlocked.Exchange(
             ref rapidFireEnabled,
             !autoFire && rapidFireConfig.Value ? 1 : 0);
+        Interlocked.Exchange(
+            ref rapidFireRate,
+            ClampRate(rapidFireRateConfig.Value));
         Interlocked.Exchange(ref dirty, 1);
     }
 
@@ -146,7 +154,8 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         bool autoFire,
         bool persist,
         bool rapidFire,
-        bool oneShot)
+        bool oneShot,
+        int rate)
     {
         godModeConfig.Value = godMode;
         ammoConfig.Value = ammo;
@@ -154,6 +163,7 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         autoFireConfig.Value = autoFire;
         persistConfig.Value = persist;
         rapidFireConfig.Value = rapidFire;
+        rapidFireRateConfig.Value = rate;
         oneShotConfig.Value = oneShot;
         Config.Save();
     }
@@ -245,7 +255,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         if (now < clock.NextTick)
             return;
 
-        clock.NextTick = now + RapidFireIntervalTicks;
+        int rate = Interlocked.CompareExchange(ref rapidFireRate, 0, 0);
+        clock.NextTick =
+            now + Math.Max(1L, Stopwatch.Frequency / rate);
         playerFireMethod.Invoke(__instance, null);
     }
 
@@ -265,6 +277,7 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         bool continues = Interlocked.CompareExchange(ref desiredContinues, 0, 0) != 0;
         bool autoFire = Interlocked.CompareExchange(ref autoFireEnabled, 0, 0) != 0;
         bool rapidFire = Interlocked.CompareExchange(ref rapidFireEnabled, 0, 0) != 0;
+        int rate = Interlocked.CompareExchange(ref rapidFireRate, 0, 0);
         bool oneShot = Interlocked.CompareExchange(ref desiredOneShot, 0, 0) != 0;
         bool persist = Interlocked.CompareExchange(ref persistEnabled, 0, 0) != 0;
         bool any = godMode || ammo || continues || oneShot;
@@ -284,7 +297,8 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
                 autoFire,
                 persist,
                 rapidFire,
-                oneShot);
+                oneShot,
+                rate);
         }
     }
 
@@ -358,14 +372,15 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private void WriteState(Stream server)
     {
         string state = String.Format(
-            "STATE {0} {1} {2} {3} {4} {5} {6}\n",
+            "STATE {0} {1} {2} {3} {4} {5} {6} {7}\n",
             Interlocked.CompareExchange(ref desiredGodMode, 0, 0),
             Interlocked.CompareExchange(ref desiredAmmo, 0, 0),
             Interlocked.CompareExchange(ref desiredContinues, 0, 0),
             Interlocked.CompareExchange(ref autoFireEnabled, 0, 0),
             Interlocked.CompareExchange(ref persistEnabled, 0, 0),
             Interlocked.CompareExchange(ref rapidFireEnabled, 0, 0),
-            Interlocked.CompareExchange(ref desiredOneShot, 0, 0));
+            Interlocked.CompareExchange(ref desiredOneShot, 0, 0),
+            Interlocked.CompareExchange(ref rapidFireRate, 0, 0));
         byte[] bytes = Encoding.ASCII.GetBytes(state);
         server.Write(bytes, 0, bytes.Length);
         server.Flush();
@@ -381,16 +396,19 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         int persist = 0;
         int rapidFire = 0;
         int oneShot = 0;
+        int rate = DefaultRapidFireRate;
         if ((parts.Length != 4 && parts.Length != 5 &&
-             parts.Length != 6 && parts.Length != 8) ||
+             parts.Length != 6 && parts.Length != 8 &&
+             parts.Length != 9) ||
             parts[0] != "STATE" ||
             !TryBit(parts[1], out godMode) ||
             !TryBit(parts[2], out ammo) ||
             !TryBit(parts[3], out continues) ||
             (parts.Length >= 5 && !TryBit(parts[4], out autoFire)) ||
             (parts.Length >= 6 && !TryBit(parts[5], out persist)) ||
-            (parts.Length == 8 && !TryBit(parts[6], out rapidFire)) ||
-            (parts.Length == 8 && !TryBit(parts[7], out oneShot)) ||
+            (parts.Length >= 8 && !TryBit(parts[6], out rapidFire)) ||
+            (parts.Length >= 8 && !TryBit(parts[7], out oneShot)) ||
+            (parts.Length == 9 && !TryRate(parts[8], out rate)) ||
             (autoFire != 0 && rapidFire != 0))
             return;
 
@@ -405,6 +423,7 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
             Interlocked.Exchange(ref rapidFireEnabled, rapidFire) != rapidFire;
         changed |=
             Interlocked.Exchange(ref desiredOneShot, oneShot) != oneShot;
+        changed |= Interlocked.Exchange(ref rapidFireRate, rate) != rate;
         changed |= Interlocked.Exchange(ref persistEnabled, persist) != persist;
         if (!changed)
             return;
@@ -416,6 +435,18 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private static bool TryBit(string text, out int value)
     {
         return Int32.TryParse(text, out value) && (value == 0 || value == 1);
+    }
+
+    private static bool TryRate(string text, out int value)
+    {
+        return Int32.TryParse(text, out value) &&
+            value >= MinRapidFireRate &&
+            value <= MaxRapidFireRate;
+    }
+
+    private static int ClampRate(int value)
+    {
+        return Math.Max(MinRapidFireRate, Math.Min(MaxRapidFireRate, value));
     }
 
     private static Type FindType(string name)

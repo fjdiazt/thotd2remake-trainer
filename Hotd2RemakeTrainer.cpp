@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <shellapi.h>
+#include <commctrl.h>
 
 #include <cstdio>
 #include <cstring>
@@ -15,6 +16,9 @@ constexpr wchar_t kGameExe[] = L"THE HOUSE OF THE DEAD 2 Remake.exe";
 constexpr wchar_t kPipePath[] = L"\\\\.\\pipe\\Hotd2RemakeTrainer";
 constexpr UINT_PTR kTimerId = 1;
 constexpr UINT kTimerIntervalMs = 250;
+constexpr int kMinRapidFireRate = 2;
+constexpr int kMaxRapidFireRate = 16;
+constexpr int kDefaultRapidFireRate = 8;
 
 enum ControlId {
     GodModeCheckbox = 1001,
@@ -24,6 +28,8 @@ enum ControlId {
     FireOffRadio,
     AutoFireRadio,
     RapidFireRadio,
+    RapidFireRateEdit,
+    RapidFireRateSpinner,
     PersistCheckbox,
 };
 
@@ -36,9 +42,13 @@ HWND gFireGroup = nullptr;
 HWND gFireOff = nullptr;
 HWND gAutoFire = nullptr;
 HWND gRapidFire = nullptr;
+HWND gRapidFireRateLabel = nullptr;
+HWND gRapidFireRateEdit = nullptr;
+HWND gRapidFireRateSpinner = nullptr;
 HWND gPersist = nullptr;
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 bool gLocalStatePending = false;
+bool gApplyingState = false;
 
 void SetStatus(const wchar_t* text) {
     SetWindowTextW(gStatus, text);
@@ -76,6 +86,32 @@ bool IsChecked(HWND checkbox) {
     return SendMessageW(checkbox, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
+int GetRapidFireRate() {
+    BOOL error = FALSE;
+    const int rate = static_cast<int>(SendMessageW(
+        gRapidFireRateSpinner,
+        UDM_GETPOS32,
+        0,
+        reinterpret_cast<LPARAM>(&error)));
+    return !error && rate >= kMinRapidFireRate && rate <= kMaxRapidFireRate
+        ? rate
+        : kDefaultRapidFireRate;
+}
+
+void SetRapidFireRate(int rate) {
+    SendMessageW(gRapidFireRateSpinner, UDM_SETPOS32, 0, rate);
+    wchar_t text[4]{};
+    swprintf_s(text, L"%d", rate);
+    SetWindowTextW(gRapidFireRateEdit, text);
+}
+
+void UpdateRapidFireRateEnabled() {
+    const BOOL enabled = IsChecked(gRapidFire);
+    EnableWindow(gRapidFireRateLabel, enabled);
+    EnableWindow(gRapidFireRateEdit, enabled);
+    EnableWindow(gRapidFireRateSpinner, enabled);
+}
+
 int FormatStateCommand(
     char* command,
     std::size_t size,
@@ -85,18 +121,20 @@ int FormatStateCommand(
     bool autoFire,
     bool persist,
     bool rapidFire,
-    bool oneShot) {
+    bool oneShot,
+    int rapidFireRate) {
     return std::snprintf(
         command,
         size,
-        "STATE %d %d %d %d %d %d %d\n",
+        "STATE %d %d %d %d %d %d %d %d\n",
         godMode ? 1 : 0,
         ammo ? 1 : 0,
         continues ? 1 : 0,
         autoFire ? 1 : 0,
         persist ? 1 : 0,
         rapidFire ? 1 : 0,
-        oneShot ? 1 : 0);
+        oneShot ? 1 : 0,
+        rapidFireRate);
 }
 
 bool ParseStateCommand(
@@ -107,12 +145,13 @@ bool ParseStateCommand(
     bool& autoFire,
     bool& persist,
     bool& rapidFire,
-    bool& oneShot) {
-    int values[7]{};
+    bool& oneShot,
+    int& rapidFireRate) {
+    int values[8]{};
     int consumed = 0;
     if (sscanf_s(
             command,
-            "STATE %d %d %d %d %d %d %d%n",
+            "STATE %d %d %d %d %d %d %d %d%n",
             &values[0],
             &values[1],
             &values[2],
@@ -120,16 +159,21 @@ bool ParseStateCommand(
             &values[4],
             &values[5],
             &values[6],
-            &consumed) != 7) {
+            &values[7],
+            &consumed) != 8) {
         return false;
     }
 
-    for (int value : values) {
-        if (value != 0 && value != 1) {
+    for (int index = 0; index < 7; ++index) {
+        if (values[index] != 0 && values[index] != 1) {
             return false;
         }
     }
     if (values[3] != 0 && values[5] != 0) {
+        return false;
+    }
+    if (values[7] < kMinRapidFireRate ||
+        values[7] > kMaxRapidFireRate) {
         return false;
     }
     for (const char* rest = command + consumed; *rest; ++rest) {
@@ -145,6 +189,7 @@ bool ParseStateCommand(
     persist = values[4] != 0;
     rapidFire = values[5] != 0;
     oneShot = values[6] != 0;
+    rapidFireRate = values[7];
     return true;
 }
 
@@ -155,12 +200,17 @@ bool SendState(
     bool autoFire,
     bool persist,
     bool rapidFire,
-    bool oneShot) {
+    bool oneShot,
+    int rapidFireRate) {
     if (gPipe == INVALID_HANDLE_VALUE) {
         return false;
     }
+    if (rapidFireRate < kMinRapidFireRate ||
+        rapidFireRate > kMaxRapidFireRate) {
+        return false;
+    }
 
-    char command[40]{};
+    char command[48]{};
     const int length = FormatStateCommand(
         command,
         sizeof(command),
@@ -170,7 +220,8 @@ bool SendState(
         autoFire,
         persist,
         rapidFire,
-        oneShot);
+        oneShot,
+        rapidFireRate);
     if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(command)) {
         return false;
     }
@@ -193,7 +244,8 @@ bool SendCurrentState() {
         IsChecked(gAutoFire),
         IsChecked(gPersist),
         IsChecked(gRapidFire),
-        IsChecked(gOneShot));
+        IsChecked(gOneShot),
+        GetRapidFireRate());
 }
 
 bool ReceiveCurrentState(bool applyState) {
@@ -227,6 +279,7 @@ bool ReceiveCurrentState(bool applyState) {
     bool persist = false;
     bool rapidFire = false;
     bool oneShot = false;
+    int rapidFireRate = kDefaultRapidFireRate;
     if (!ParseStateCommand(
             response,
             godMode,
@@ -235,7 +288,8 @@ bool ReceiveCurrentState(bool applyState) {
             autoFire,
             persist,
             rapidFire,
-            oneShot)) {
+            oneShot,
+            rapidFireRate)) {
         return false;
     }
 
@@ -258,6 +312,10 @@ bool ReceiveCurrentState(bool applyState) {
         gAutoFire, BM_SETCHECK, autoFire ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(
         gRapidFire, BM_SETCHECK, rapidFire ? BST_CHECKED : BST_UNCHECKED, 0);
+    gApplyingState = true;
+    SetRapidFireRate(rapidFireRate);
+    gApplyingState = false;
+    UpdateRapidFireRateEnabled();
     SendMessageW(
         gPersist, BM_SETCHECK, persist ? BST_CHECKED : BST_UNCHECKED, 0);
     return true;
@@ -367,7 +425,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             24,
             194,
             350,
-            100,
+            136,
             window,
             nullptr,
             GetModuleHandleW(nullptr),
@@ -376,11 +434,67 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gAutoFire = AddRadio(
             window, L"Auto Fire (native max)", 242, AutoFireRadio, false);
         gRapidFire = AddRadio(
-            window, L"Rapid Fire (8 shots/sec)", 268, RapidFireRadio, false);
+            window, L"Rapid Fire", 268, RapidFireRadio, false);
+        gRapidFireRateLabel = CreateWindowExW(
+            0,
+            L"STATIC",
+            L"Shots/sec:",
+            WS_CHILD | WS_VISIBLE,
+            64,
+            299,
+            58,
+            20,
+            window,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        gRapidFireRateEdit = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            L"EDIT",
+            L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_READONLY |
+                ES_CENTER,
+            126,
+            294,
+            58,
+            24,
+            window,
+            reinterpret_cast<HMENU>(
+                static_cast<INT_PTR>(RapidFireRateEdit)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        gRapidFireRateSpinner = CreateWindowExW(
+            0,
+            UPDOWN_CLASSW,
+            nullptr,
+            WS_CHILD | WS_VISIBLE | UDS_ALIGNRIGHT | UDS_SETBUDDYINT |
+                UDS_ARROWKEYS,
+            0,
+            0,
+            0,
+            0,
+            window,
+            reinterpret_cast<HMENU>(
+                static_cast<INT_PTR>(RapidFireRateSpinner)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(
+            gRapidFireRateSpinner,
+            UDM_SETBUDDY,
+            reinterpret_cast<WPARAM>(gRapidFireRateEdit),
+            0);
+        SendMessageW(
+            gRapidFireRateSpinner,
+            UDM_SETRANGE32,
+            kMinRapidFireRate,
+            kMaxRapidFireRate);
+        gApplyingState = true;
+        SetRapidFireRate(kDefaultRapidFireRate);
+        gApplyingState = false;
         gPersist = AddCheckbox(
             window,
             L"Remember cheats across game restarts",
-            304,
+            340,
             PersistCheckbox);
 
         SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -392,8 +506,19 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         SendMessageW(gFireOff, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gAutoFire, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gRapidFire, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SendMessageW(
+            gRapidFireRateLabel,
+            WM_SETFONT,
+            reinterpret_cast<WPARAM>(font),
+            TRUE);
+        SendMessageW(
+            gRapidFireRateEdit,
+            WM_SETFONT,
+            reinterpret_cast<WPARAM>(font),
+            TRUE);
         SendMessageW(gPersist, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(gFireOff, BM_SETCHECK, BST_CHECKED, 0);
+        UpdateRapidFireRateEnabled();
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
@@ -406,6 +531,19 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     case WM_COMMAND:
         if (HIWORD(wParam) == BN_CLICKED) {
+            if (LOWORD(wParam) == FireOffRadio ||
+                LOWORD(wParam) == AutoFireRadio ||
+                LOWORD(wParam) == RapidFireRadio) {
+                UpdateRapidFireRateEnabled();
+            }
+            if (gPipe == INVALID_HANDLE_VALUE) {
+                gLocalStatePending = true;
+            }
+            Tick();
+        } else if (
+            LOWORD(wParam) == RapidFireRateEdit &&
+            HIWORD(wParam) == EN_CHANGE &&
+            !gApplyingState) {
             if (gPipe == INVALID_HANDLE_VALUE) {
                 gLocalStatePending = true;
             }
@@ -415,7 +553,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_DESTROY:
         KillTimer(window, kTimerId);
         if (!IsChecked(gPersist)) {
-            SendState(false, false, false, false, false, false, false);
+            SendState(
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                GetRapidFireRate());
         }
         Disconnect();
         PostQuitMessage(0);
@@ -426,9 +572,18 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 }
 
 bool SelfTest() {
-    char command[40]{};
+    char command[48]{};
     const int length = FormatStateCommand(
-        command, sizeof(command), true, false, true, true, true, false, true);
+        command,
+        sizeof(command),
+        true,
+        false,
+        true,
+        true,
+        true,
+        false,
+        true,
+        kDefaultRapidFireRate);
     bool godMode = false;
     bool ammo = false;
     bool continues = false;
@@ -436,10 +591,11 @@ bool SelfTest() {
     bool persist = false;
     bool rapidFire = false;
     bool oneShot = false;
+    int rapidFireRate = 0;
     return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
-           length == 20 &&
-           std::strcmp(command, "STATE 1 0 1 1 1 0 1\n") == 0 &&
+           length == 22 &&
+           std::strcmp(command, "STATE 1 0 1 1 1 0 1 8\n") == 0 &&
            ParseStateCommand(
                command,
                godMode,
@@ -448,18 +604,31 @@ bool SelfTest() {
                autoFire,
                persist,
                rapidFire,
-               oneShot) &&
+               oneShot,
+               rapidFireRate) &&
            godMode && !ammo && continues && autoFire && persist &&
            !rapidFire && oneShot &&
+           rapidFireRate == kDefaultRapidFireRate &&
            !ParseStateCommand(
-               "STATE 1 0 1 1 1 1 1\n",
+               "STATE 1 0 1 1 1 1 1 8\n",
                godMode,
                ammo,
                continues,
                autoFire,
                persist,
                rapidFire,
-               oneShot);
+               oneShot,
+               rapidFireRate) &&
+           !ParseStateCommand(
+               "STATE 1 0 1 0 1 1 1 17\n",
+               godMode,
+               ammo,
+               continues,
+               autoFire,
+               persist,
+               rapidFire,
+               oneShot,
+               rapidFireRate);
 }
 
 bool HasSelfTestArgument() {
@@ -485,6 +654,14 @@ bool HasSelfTestArgument() {
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (HasSelfTestArgument()) {
         return SelfTest() ? 0 : 1;
+    }
+
+    INITCOMMONCONTROLSEX commonControls{
+        sizeof(commonControls),
+        ICC_UPDOWN_CLASS,
+    };
+    if (!InitCommonControlsEx(&commonControls)) {
+        return 1;
     }
 
     constexpr wchar_t kClassName[] = L"Hotd2RemakeTrainerWindow";
@@ -514,7 +691,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         410,
-        389,
+        435,
         nullptr,
         nullptr,
         instance,

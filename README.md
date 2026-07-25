@@ -1,5 +1,7 @@
 # The House of the Dead 2: Remake Trainer
 
+![The House of the Dead 2: Remake logo](assets/hotd2-remake-logo.png)
+
 Portable Windows trainer for **THE HOUSE OF THE DEAD 2: Remake**. Instead of
 patching raw game memory like a conventional standalone trainer, it loads a
 small BepInEx bridge into the game. This lets it use the game's built-in cheat
@@ -17,7 +19,7 @@ Engine or process-memory editor is required.
 - Infinite Continues
 - One Shot Mode
 - Auto Fire at the weapon's native maximum rate
-- Rapid Fire at 8 shots per second
+- Adjustable Rapid Fire from 2 to 16 shots per second
 - Optional cheat persistence across game and trainer restarts
 
 ## Requirements
@@ -78,7 +80,7 @@ the connection are sent to the bridge when the game starts.
 | One Shot Mode | Enables the game's built-in one-shot damage mode. |
 | Off | Disables both automatic fire modes. |
 | Auto Fire (native max) | Holding the trigger uses the game's built-in automatic-fire loop at the weapon's native maximum cadence. |
-| Rapid Fire (8 shots/sec) | Holding the trigger repeats the normal fire action up to eight times per second. Native ammo, reload, blocking, and weapon cooldown rules still apply. |
+| Rapid Fire | Holding the trigger repeats the normal fire action at the selected 2-16 shots-per-second rate. Native ammo, reload, blocking, and weapon cooldown rules still apply. |
 | Remember cheats across game restarts | Saves every option in the bridge and restores it the next time the game starts. |
 
 Auto Fire and Rapid Fire are mutually exclusive. Rapid Fire does not modify
