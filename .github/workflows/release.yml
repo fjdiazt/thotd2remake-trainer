@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify release files
+        run: |
+          test -s dist/Hotd2RemakeTrainer.exe
+          test -s dist/Hotd2TrainerBridge.dll
+
+      - name: Select next version
+        id: version
+        shell: bash
+        run: |
+          latest=
+          while IFS= read -r candidate; do
+            if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              latest="$candidate"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-v:refname)
+
+          if [[ -z "$latest" ]]; then
+            tag=v1.0.0
+          else
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            tag="v${major}.${minor}.$((patch + 1))"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            "dist/Hotd2RemakeTrainer.exe#HotD2 Remake Trainer" \
+            "dist/Hotd2TrainerBridge.dll#BepInEx Bridge" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target main \
+            --title "$TAG" \
+            --generate-notes \
+            --fail-on-no-commits
