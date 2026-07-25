@@ -3,3 +3,4 @@ obj/
 *.user
 *.suo
 docs/superpowers/
+.worktrees/
