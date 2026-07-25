@@ -1,8 +1,14 @@
 # The House of the Dead 2: Remake Trainer
 
-Portable Windows trainer for **THE HOUSE OF THE DEAD 2: Remake**. A small
-BepInEx plugin changes the game's built-in cheat state; the separate GUI only
-controls its options. No Cheat Engine or process-memory editor is required.
+Portable Windows trainer for **THE HOUSE OF THE DEAD 2: Remake**. Instead of
+patching raw game memory like a conventional standalone trainer, it loads a
+small BepInEx bridge into the game. This lets it use the game's built-in cheat
+system while the separate GUI only controls the options.
+
+The bridge also owns persistence. Enable **Remember cheats across game
+restarts**, choose the options once, and the bridge restores them on every
+later game launch; the trainer GUI does not need to be started again. No Cheat
+Engine or process-memory editor is required.
 
 ## Features
 
