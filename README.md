@@ -7,7 +7,7 @@ patching raw game memory like a conventional standalone trainer, it loads a
 small BepInEx bridge into the game. This lets it use the game's built-in cheat
 system while the separate GUI only controls the options.
 
-The bridge also owns persistence. Enable **Remember cheats across game
+The bridge also owns persistence. Enable **Remember gameplay cheats across game
 restarts**, choose the options once, and the bridge restores them on every
 later game launch; the trainer GUI does not need to be started again. No Cheat
 Engine or process-memory editor is required.
@@ -18,9 +18,14 @@ Engine or process-memory editor is required.
 - Infinite Ammo
 - Infinite Continues
 - One Shot Mode
+- Easy Boss Mode
+- Zero Damage
+- All Weapons Unlocked
 - Auto Fire at the weapon's native maximum rate
 - Adjustable Rapid Fire from 2 to 16 shots per second
-- Optional cheat persistence across game and trainer restarts
+- Unlock all chapters, bestiary, training modes, boss modes, stars, trunk
+  items, and achievements
+- Optional gameplay-cheat persistence across game and trainer restarts
 
 ## Requirements
 
@@ -78,17 +83,35 @@ the connection are sent to the bridge when the game starts.
 | Infinite Ammo | Enables the game's infinite-ammo state. |
 | Infinite Continues | Enables unlimited continue tokens. |
 | One Shot Mode | Enables the game's built-in one-shot damage mode. |
+| Easy Boss Mode | Enables the game's built-in easier-boss behavior. |
+| Zero Damage | Enables the game's built-in zero-damage mode. |
+| All Weapons Unlocked | Makes every weapon available while enabled. |
 | Off | Disables both automatic fire modes. |
 | Auto Fire (native max) | Holding the trigger uses the game's built-in automatic-fire loop at the weapon's native maximum cadence. |
 | Rapid Fire | Holding the trigger repeats the normal fire action at the selected 2-16 shots-per-second rate. Native ammo, reload, blocking, and weapon cooldown rules still apply. |
-| Remember cheats across game restarts | Saves every option in the bridge and restores it the next time the game starts. |
+| Remember gameplay cheats across game restarts | Saves gameplay and fire-mode options in the bridge and restores them the next time the game starts. |
 
 Auto Fire and Rapid Fire are mutually exclusive. Rapid Fire does not modify
 per-shot damage; any faster enemy kills come from firing more often.
 
+### Progression unlocks
+
+The right-hand buttons invoke the game's built-in unlock actions for:
+
+- all chapters and the bestiary;
+- training modes, with a separate option for all stars;
+- boss modes, with a separate option for all stars;
+- all trunk items;
+- all achievements.
+
+Unlock actions can modify game save progress and cannot be undone by the trainer.
+The achievements button shows an additional confirmation because it may also
+permanently unlock platform achievements. These actions are separate from the
+gameplay-cheat persistence checkbox.
+
 ## Persistence
 
-With **Remember cheats across game restarts** enabled:
+With **Remember gameplay cheats across game restarts** enabled:
 
 - closing the GUI leaves the selected cheats active;
 - starting the game restores them without opening the GUI;

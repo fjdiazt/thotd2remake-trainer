@@ -25,12 +25,23 @@ enum ControlId {
     AmmoCheckbox,
     ContinuesCheckbox,
     OneShotCheckbox,
+    EasyBossCheckbox,
+    ZeroDamageCheckbox,
+    AllWeaponsCheckbox,
     FireOffRadio,
     AutoFireRadio,
     RapidFireRadio,
     RapidFireRateEdit,
     RapidFireRateSpinner,
     PersistCheckbox,
+    UnlockChaptersButton,
+    UnlockBestiaryButton,
+    UnlockTrainingButton,
+    UnlockTrainingStarsButton,
+    UnlockBossButton,
+    UnlockBossStarsButton,
+    UnlockTrunkButton,
+    UnlockAchievementsButton,
 };
 
 HWND gStatus = nullptr;
@@ -38,7 +49,12 @@ HWND gGodMode = nullptr;
 HWND gAmmo = nullptr;
 HWND gContinues = nullptr;
 HWND gOneShot = nullptr;
+HWND gEasyBoss = nullptr;
+HWND gZeroDamage = nullptr;
+HWND gAllWeapons = nullptr;
+HWND gGameplayGroup = nullptr;
 HWND gFireGroup = nullptr;
+HWND gProgressionGroup = nullptr;
 HWND gFireOff = nullptr;
 HWND gAutoFire = nullptr;
 HWND gRapidFire = nullptr;
@@ -46,6 +62,8 @@ HWND gRapidFireRateLabel = nullptr;
 HWND gRapidFireRateEdit = nullptr;
 HWND gRapidFireRateSpinner = nullptr;
 HWND gPersist = nullptr;
+HWND gActionStatus = nullptr;
+HWND gActionButtons[8]{};
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 bool gLocalStatePending = false;
 bool gApplyingState = false;
@@ -112,6 +130,30 @@ void UpdateRapidFireRateEnabled() {
     EnableWindow(gRapidFireRateSpinner, enabled);
 }
 
+bool IsUnlockAction(int cheatType) {
+    switch (cheatType) {
+    case 7:  // Training modes
+    case 9:  // Trunk items
+    case 11: // Boss modes
+    case 13: // Chapters
+    case 15: // Bestiary
+    case 16: // Achievements
+    case 17: // Boss mode stars
+    case 18: // Training mode stars
+        return true;
+    default:
+        return false;
+    }
+}
+
+int FormatActionCommand(
+    char* command, std::size_t size, int cheatType) {
+    if (!IsUnlockAction(cheatType)) {
+        return -1;
+    }
+    return std::snprintf(command, size, "ACTION %d\n", cheatType);
+}
+
 int FormatStateCommand(
     char* command,
     std::size_t size,
@@ -122,11 +164,14 @@ int FormatStateCommand(
     bool persist,
     bool rapidFire,
     bool oneShot,
+    bool easyBoss,
+    bool zeroDamage,
+    bool allWeapons,
     int rapidFireRate) {
     return std::snprintf(
         command,
         size,
-        "STATE %d %d %d %d %d %d %d %d\n",
+        "STATE %d %d %d %d %d %d %d %d %d %d %d\n",
         godMode ? 1 : 0,
         ammo ? 1 : 0,
         continues ? 1 : 0,
@@ -134,6 +179,9 @@ int FormatStateCommand(
         persist ? 1 : 0,
         rapidFire ? 1 : 0,
         oneShot ? 1 : 0,
+        easyBoss ? 1 : 0,
+        zeroDamage ? 1 : 0,
+        allWeapons ? 1 : 0,
         rapidFireRate);
 }
 
@@ -146,12 +194,15 @@ bool ParseStateCommand(
     bool& persist,
     bool& rapidFire,
     bool& oneShot,
+    bool& easyBoss,
+    bool& zeroDamage,
+    bool& allWeapons,
     int& rapidFireRate) {
-    int values[8]{};
+    int values[11]{};
     int consumed = 0;
     if (sscanf_s(
             command,
-            "STATE %d %d %d %d %d %d %d %d%n",
+            "STATE %d %d %d %d %d %d %d %d %d %d %d%n",
             &values[0],
             &values[1],
             &values[2],
@@ -160,11 +211,14 @@ bool ParseStateCommand(
             &values[5],
             &values[6],
             &values[7],
-            &consumed) != 8) {
+            &values[8],
+            &values[9],
+            &values[10],
+            &consumed) != 11) {
         return false;
     }
 
-    for (int index = 0; index < 7; ++index) {
+    for (int index = 0; index < 10; ++index) {
         if (values[index] != 0 && values[index] != 1) {
             return false;
         }
@@ -172,8 +226,8 @@ bool ParseStateCommand(
     if (values[3] != 0 && values[5] != 0) {
         return false;
     }
-    if (values[7] < kMinRapidFireRate ||
-        values[7] > kMaxRapidFireRate) {
+    if (values[10] < kMinRapidFireRate ||
+        values[10] > kMaxRapidFireRate) {
         return false;
     }
     for (const char* rest = command + consumed; *rest; ++rest) {
@@ -189,10 +243,12 @@ bool ParseStateCommand(
     persist = values[4] != 0;
     rapidFire = values[5] != 0;
     oneShot = values[6] != 0;
-    rapidFireRate = values[7];
+    easyBoss = values[7] != 0;
+    zeroDamage = values[8] != 0;
+    allWeapons = values[9] != 0;
+    rapidFireRate = values[10];
     return true;
 }
-
 bool SendState(
     bool godMode,
     bool ammo,
@@ -201,6 +257,9 @@ bool SendState(
     bool persist,
     bool rapidFire,
     bool oneShot,
+    bool easyBoss,
+    bool zeroDamage,
+    bool allWeapons,
     int rapidFireRate) {
     if (gPipe == INVALID_HANDLE_VALUE) {
         return false;
@@ -210,7 +269,7 @@ bool SendState(
         return false;
     }
 
-    char command[48]{};
+    char command[64]{};
     const int length = FormatStateCommand(
         command,
         sizeof(command),
@@ -221,7 +280,32 @@ bool SendState(
         persist,
         rapidFire,
         oneShot,
+        easyBoss,
+        zeroDamage,
+        allWeapons,
         rapidFireRate);
+    if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(command)) {
+        return false;
+    }
+
+    DWORD written = 0;
+    return WriteFile(
+               gPipe,
+               command,
+               static_cast<DWORD>(length),
+               &written,
+               nullptr) &&
+           written == static_cast<DWORD>(length);
+}
+
+bool SendAction(int cheatType) {
+    if (gPipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    char command[16]{};
+    const int length =
+        FormatActionCommand(command, sizeof(command), cheatType);
     if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(command)) {
         return false;
     }
@@ -245,9 +329,11 @@ bool SendCurrentState() {
         IsChecked(gPersist),
         IsChecked(gRapidFire),
         IsChecked(gOneShot),
+        IsChecked(gEasyBoss),
+        IsChecked(gZeroDamage),
+        IsChecked(gAllWeapons),
         GetRapidFireRate());
 }
-
 bool ReceiveCurrentState(bool applyState) {
     DWORD available = 0;
     for (int attempt = 0; attempt < 100; ++attempt) {
@@ -279,6 +365,9 @@ bool ReceiveCurrentState(bool applyState) {
     bool persist = false;
     bool rapidFire = false;
     bool oneShot = false;
+    bool easyBoss = false;
+    bool zeroDamage = false;
+    bool allWeapons = false;
     int rapidFireRate = kDefaultRapidFireRate;
     if (!ParseStateCommand(
             response,
@@ -289,6 +378,9 @@ bool ReceiveCurrentState(bool applyState) {
             persist,
             rapidFire,
             oneShot,
+            easyBoss,
+            zeroDamage,
+            allWeapons,
             rapidFireRate)) {
         return false;
     }
@@ -303,6 +395,12 @@ bool ReceiveCurrentState(bool applyState) {
         gContinues, BM_SETCHECK, continues ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(
         gOneShot, BM_SETCHECK, oneShot ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gEasyBoss, BM_SETCHECK, easyBoss ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gZeroDamage, BM_SETCHECK, zeroDamage ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(
+        gAllWeapons, BM_SETCHECK, allWeapons ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(
         gFireOff,
         BM_SETCHECK,
@@ -337,40 +435,65 @@ bool Connect() {
         Disconnect();
         return false;
     }
+    SetWindowTextW(
+        gActionStatus,
+        L"Ready. Unlock actions apply to the current save.");
     return true;
+}
+
+void SetActionButtonsEnabled(bool enabled) {
+    for (HWND button : gActionButtons) {
+        EnableWindow(button, enabled ? TRUE : FALSE);
+    }
 }
 
 void Tick() {
     if (!IsGameRunning()) {
         Disconnect();
+        SetActionButtonsEnabled(false);
+        SetWindowTextW(
+            gActionStatus, L"Start the game to enable unlock actions.");
         SetStatus(L"Waiting for Remake...");
         return;
     }
 
     if (gPipe == INVALID_HANDLE_VALUE && !Connect()) {
+        SetActionButtonsEnabled(false);
+        SetWindowTextW(
+            gActionStatus, L"BepInEx bridge unavailable.");
         SetStatus(L"Game found; BepInEx bridge offline");
         return;
     }
 
     if (!SendCurrentState()) {
         Disconnect();
+        SetActionButtonsEnabled(false);
+        SetWindowTextW(
+            gActionStatus, L"Bridge reconnecting...");
         SetStatus(L"Game found; reconnecting bridge...");
         return;
     }
 
     gLocalStatePending = false;
+    SetActionButtonsEnabled(true);
     SetStatus(L"Connected to Remake");
 }
 
-HWND AddCheckbox(HWND parent, const wchar_t* text, int y, int id) {
+HWND AddCheckbox(
+    HWND parent,
+    const wchar_t* text,
+    int x,
+    int y,
+    int width,
+    int id) {
     return CreateWindowExW(
         0,
         L"BUTTON",
         text,
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
-        24,
+        x,
         y,
-        350,
+        width,
         28,
         parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
@@ -379,21 +502,72 @@ HWND AddCheckbox(HWND parent, const wchar_t* text, int y, int id) {
 }
 
 HWND AddRadio(
-    HWND parent, const wchar_t* text, int y, int id, bool first) {
+    HWND parent,
+    const wchar_t* text,
+    int x,
+    int y,
+    int width,
+    int id,
+    bool first) {
     return CreateWindowExW(
         0,
         L"BUTTON",
         text,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON |
             (first ? WS_GROUP : 0),
-        40,
+        x,
         y,
-        310,
+        width,
         24,
         parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
         GetModuleHandleW(nullptr),
         nullptr);
+}
+
+HWND AddButton(
+    HWND parent,
+    const wchar_t* text,
+    int x,
+    int y,
+    int width,
+    int id) {
+    return CreateWindowExW(
+        0,
+        L"BUTTON",
+        text,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        x,
+        y,
+        width,
+        32,
+        parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+        GetModuleHandleW(nullptr),
+        nullptr);
+}
+
+int ActionForControl(int id) {
+    switch (id) {
+    case UnlockTrainingButton:
+        return 7;
+    case UnlockTrunkButton:
+        return 9;
+    case UnlockBossButton:
+        return 11;
+    case UnlockChaptersButton:
+        return 13;
+    case UnlockBestiaryButton:
+        return 15;
+    case UnlockAchievementsButton:
+        return 16;
+    case UnlockBossStarsButton:
+        return 17;
+    case UnlockTrainingStarsButton:
+        return 18;
+    default:
+        return 0;
+    }
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -406,42 +580,74 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             L"Waiting for Remake...",
             WS_CHILD | WS_VISIBLE,
             24,
-            20,
-            350,
+            18,
+            720,
             24,
             window,
             nullptr,
             GetModuleHandleW(nullptr),
             nullptr);
-        gGodMode = AddCheckbox(window, L"Infinite Health", 58, GodModeCheckbox);
-        gAmmo = AddCheckbox(window, L"Infinite Ammo", 92, AmmoCheckbox);
-        gContinues = AddCheckbox(window, L"Infinite Continues", 126, ContinuesCheckbox);
-        gOneShot = AddCheckbox(window, L"One Shot Mode", 160, OneShotCheckbox);
+
+        gGameplayGroup = CreateWindowExW(
+            0,
+            L"BUTTON",
+            L"Gameplay",
+            WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+            20,
+            50,
+            350,
+            260,
+            window,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        gGodMode = AddCheckbox(
+            window, L"Infinite Health", 40, 72, 310, GodModeCheckbox);
+        gAmmo = AddCheckbox(
+            window, L"Infinite Ammo", 40, 104, 310, AmmoCheckbox);
+        gContinues = AddCheckbox(
+            window, L"Infinite Continues", 40, 136, 310, ContinuesCheckbox);
+        gOneShot = AddCheckbox(
+            window, L"One Shot Mode", 40, 168, 310, OneShotCheckbox);
+        gEasyBoss = AddCheckbox(
+            window, L"Easy Boss Mode", 40, 200, 310, EasyBossCheckbox);
+        gZeroDamage = AddCheckbox(
+            window, L"Zero Damage", 40, 232, 310, ZeroDamageCheckbox);
+        gAllWeapons = AddCheckbox(
+            window, L"All Weapons Unlocked", 40, 264, 310, AllWeaponsCheckbox);
+
         gFireGroup = CreateWindowExW(
             0,
             L"BUTTON",
             L"Fire mode",
             WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            24,
-            194,
+            20,
+            322,
             350,
-            136,
+            148,
             window,
             nullptr,
             GetModuleHandleW(nullptr),
             nullptr);
-        gFireOff = AddRadio(window, L"Off", 216, FireOffRadio, true);
+        gFireOff = AddRadio(
+            window, L"Off", 40, 344, 310, FireOffRadio, true);
         gAutoFire = AddRadio(
-            window, L"Auto Fire (native max)", 242, AutoFireRadio, false);
+            window,
+            L"Auto Fire (native max)",
+            40,
+            370,
+            310,
+            AutoFireRadio,
+            false);
         gRapidFire = AddRadio(
-            window, L"Rapid Fire", 268, RapidFireRadio, false);
+            window, L"Rapid Fire", 40, 396, 310, RapidFireRadio, false);
         gRapidFireRateLabel = CreateWindowExW(
             0,
             L"STATIC",
             L"Shots/sec:",
             WS_CHILD | WS_VISIBLE,
             64,
-            299,
+            427,
             58,
             20,
             window,
@@ -455,7 +661,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_READONLY |
                 ES_CENTER,
             126,
-            294,
+            422,
             58,
             24,
             window,
@@ -491,34 +697,118 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gApplyingState = true;
         SetRapidFireRate(kDefaultRapidFireRate);
         gApplyingState = false;
+
+        gProgressionGroup = CreateWindowExW(
+            0,
+            L"BUTTON",
+            L"Progression unlocks",
+            WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+            390,
+            50,
+            370,
+            420,
+            window,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        HWND warning = CreateWindowExW(
+            0,
+            L"STATIC",
+            L"These actions modify save progress and cannot be undone.",
+            WS_CHILD | WS_VISIBLE,
+            410,
+            74,
+            330,
+            38,
+            window,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        gActionButtons[0] = AddButton(
+            window, L"All Chapters", 410, 120, 155, UnlockChaptersButton);
+        gActionButtons[1] = AddButton(
+            window, L"Bestiary", 580, 120, 160, UnlockBestiaryButton);
+        gActionButtons[2] = AddButton(
+            window, L"Training Modes", 410, 164, 155, UnlockTrainingButton);
+        gActionButtons[3] = AddButton(
+            window,
+            L"Training + Stars",
+            580,
+            164,
+            160,
+            UnlockTrainingStarsButton);
+        gActionButtons[4] = AddButton(
+            window, L"Boss Modes", 410, 208, 155, UnlockBossButton);
+        gActionButtons[5] = AddButton(
+            window,
+            L"Boss + Stars",
+            580,
+            208,
+            160,
+            UnlockBossStarsButton);
+        gActionButtons[6] = AddButton(
+            window, L"All Trunk Items", 410, 252, 155, UnlockTrunkButton);
+        gActionButtons[7] = AddButton(
+            window,
+            L"All Achievements",
+            580,
+            252,
+            160,
+            UnlockAchievementsButton);
+        gActionStatus = CreateWindowExW(
+            0,
+            L"STATIC",
+            L"Start the game to enable unlock actions.",
+            WS_CHILD | WS_VISIBLE,
+            410,
+            306,
+            330,
+            48,
+            window,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+
         gPersist = AddCheckbox(
             window,
-            L"Remember cheats across game restarts",
-            340,
+            L"Remember gameplay cheats across game restarts",
+            40,
+            486,
+            700,
             PersistCheckbox);
 
-        SendMessageW(gStatus, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gGodMode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gAmmo, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gContinues, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gOneShot, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gFireGroup, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gFireOff, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gAutoFire, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(gRapidFire, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(
+        HWND controls[] = {
+            gStatus,
+            gGameplayGroup,
+            gGodMode,
+            gAmmo,
+            gContinues,
+            gOneShot,
+            gEasyBoss,
+            gZeroDamage,
+            gAllWeapons,
+            gFireGroup,
+            gFireOff,
+            gAutoFire,
+            gRapidFire,
             gRapidFireRateLabel,
-            WM_SETFONT,
-            reinterpret_cast<WPARAM>(font),
-            TRUE);
-        SendMessageW(
             gRapidFireRateEdit,
-            WM_SETFONT,
-            reinterpret_cast<WPARAM>(font),
-            TRUE);
-        SendMessageW(gPersist, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            gProgressionGroup,
+            warning,
+            gActionStatus,
+            gPersist,
+        };
+        for (HWND control : controls) {
+            SendMessageW(
+                control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        }
+        for (HWND button : gActionButtons) {
+            SendMessageW(
+                button, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        }
         SendMessageW(gFireOff, BM_SETCHECK, BST_CHECKED, 0);
         UpdateRapidFireRateEnabled();
+        SetActionButtonsEnabled(false);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
@@ -531,9 +821,34 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     case WM_COMMAND:
         if (HIWORD(wParam) == BN_CLICKED) {
-            if (LOWORD(wParam) == FireOffRadio ||
-                LOWORD(wParam) == AutoFireRadio ||
-                LOWORD(wParam) == RapidFireRadio) {
+            const int id = LOWORD(wParam);
+            const int action = ActionForControl(id);
+            if (action != 0) {
+                if (action == 16 &&
+                    MessageBoxW(
+                        window,
+                        L"This may permanently unlock platform achievements. Continue?",
+                        L"Unlock all achievements",
+                        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES) {
+                    return 0;
+                }
+                if (SendAction(action)) {
+                    SetWindowTextW(
+                        gActionStatus,
+                        L"Unlock request sent to the game.");
+                } else {
+                    Disconnect();
+                    SetActionButtonsEnabled(false);
+                    SetWindowTextW(
+                        gActionStatus,
+                        L"Bridge disconnected. Reconnect and try again.");
+                }
+                return 0;
+            }
+
+            if (id == FireOffRadio ||
+                id == AutoFireRadio ||
+                id == RapidFireRadio) {
                 UpdateRapidFireRateEnabled();
             }
             if (gPipe == INVALID_HANDLE_VALUE) {
@@ -561,6 +876,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 false,
                 false,
                 false,
+                false,
+                false,
+                false,
                 GetRapidFireRate());
         }
         Disconnect();
@@ -570,9 +888,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return DefWindowProcW(window, message, wParam, lParam);
     }
 }
-
 bool SelfTest() {
-    char command[48]{};
+    char command[64]{};
     const int length = FormatStateCommand(
         command,
         sizeof(command),
@@ -583,7 +900,13 @@ bool SelfTest() {
         true,
         false,
         true,
+        true,
+        false,
+        true,
         kDefaultRapidFireRate);
+    char action[16]{};
+    const int actionLength =
+        FormatActionCommand(action, sizeof(action), 13);
     bool godMode = false;
     bool ammo = false;
     bool continues = false;
@@ -591,11 +914,27 @@ bool SelfTest() {
     bool persist = false;
     bool rapidFire = false;
     bool oneShot = false;
+    bool easyBoss = false;
+    bool zeroDamage = false;
+    bool allWeapons = false;
     int rapidFireRate = 0;
     return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
-           length == 22 &&
-           std::strcmp(command, "STATE 1 0 1 1 1 0 1 8\n") == 0 &&
+           length == 28 &&
+           std::strcmp(command, "STATE 1 0 1 1 1 0 1 1 0 1 8\n") == 0 &&
+           actionLength == 10 &&
+           std::strcmp(action, "ACTION 13\n") == 0 &&
+           IsUnlockAction(7) &&
+           IsUnlockAction(9) &&
+           IsUnlockAction(11) &&
+           IsUnlockAction(13) &&
+           IsUnlockAction(15) &&
+           IsUnlockAction(16) &&
+           IsUnlockAction(17) &&
+           IsUnlockAction(18) &&
+           !IsUnlockAction(8) &&
+           !IsUnlockAction(10) &&
+           !IsUnlockAction(12) &&
            ParseStateCommand(
                command,
                godMode,
@@ -605,12 +944,15 @@ bool SelfTest() {
                persist,
                rapidFire,
                oneShot,
+               easyBoss,
+               zeroDamage,
+               allWeapons,
                rapidFireRate) &&
            godMode && !ammo && continues && autoFire && persist &&
-           !rapidFire && oneShot &&
+           !rapidFire && oneShot && easyBoss && !zeroDamage && allWeapons &&
            rapidFireRate == kDefaultRapidFireRate &&
            !ParseStateCommand(
-               "STATE 1 0 1 1 1 1 1 8\n",
+               "STATE 1 0 1 1 1 1 1 0 0 0 8\n",
                godMode,
                ammo,
                continues,
@@ -618,9 +960,12 @@ bool SelfTest() {
                persist,
                rapidFire,
                oneShot,
+               easyBoss,
+               zeroDamage,
+               allWeapons,
                rapidFireRate) &&
            !ParseStateCommand(
-               "STATE 1 0 1 0 1 1 1 17\n",
+               "STATE 1 0 1 0 1 1 1 0 0 0 17\n",
                godMode,
                ammo,
                continues,
@@ -628,6 +973,9 @@ bool SelfTest() {
                persist,
                rapidFire,
                oneShot,
+               easyBoss,
+               zeroDamage,
+               allWeapons,
                rapidFireRate);
 }
 
@@ -690,8 +1038,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        410,
-        435,
+        790,
+        570,
         nullptr,
         nullptr,
         instance,
