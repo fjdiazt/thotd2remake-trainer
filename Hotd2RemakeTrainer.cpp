@@ -5,6 +5,14 @@
 #include <tlhelp32.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
+
+#pragma comment( \
+    linker, \
+    "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' " \
+    "version='6.0.0.0' processorArchitecture='*' " \
+    "publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include <cstdio>
 #include <cstring>
@@ -19,6 +27,10 @@ constexpr UINT kTimerIntervalMs = 250;
 constexpr int kMinRapidFireRate = 2;
 constexpr int kMaxRapidFireRate = 16;
 constexpr int kDefaultRapidFireRate = 8;
+
+constexpr COLORREF kWindowColor = RGB(24, 24, 27);
+constexpr COLORREF kTextColor = RGB(244, 244, 245);
+constexpr COLORREF kMutedTextColor = RGB(161, 161, 170);
 
 enum ControlId {
     GodModeCheckbox = 1001,
@@ -67,9 +79,95 @@ HWND gActionButtons[8]{};
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 bool gLocalStatePending = false;
 bool gApplyingState = false;
+HBRUSH gWindowBrush = nullptr;
 
 void SetStatus(const wchar_t* text) {
     SetWindowTextW(gStatus, text);
+}
+
+int Brightness(COLORREF color) {
+    return (color & 0xff) + ((color >> 8) & 0xff) + ((color >> 16) & 0xff);
+}
+
+bool IsDarkPalette() {
+    return Brightness(kWindowColor) < Brightness(kTextColor);
+}
+
+enum class PreferredAppMode {
+    Default,
+    AllowDark,
+    ForceDark,
+    ForceLight,
+    Max,
+};
+
+using AllowDarkModeForWindowFn = BOOL(WINAPI*)(HWND, BOOL);
+using SetPreferredAppModeFn =
+    PreferredAppMode(WINAPI*)(PreferredAppMode);
+
+FARPROC UxThemeFunction(WORD ordinal) {
+    const HMODULE module = GetModuleHandleW(L"uxtheme.dll");
+    return module ? GetProcAddress(module, MAKEINTRESOURCEA(ordinal)) : nullptr;
+}
+
+void AllowDarkMode(HWND window) {
+    static const auto allowDarkModeForWindow =
+        reinterpret_cast<AllowDarkModeForWindowFn>(UxThemeFunction(133));
+    if (allowDarkModeForWindow) {
+        allowDarkModeForWindow(window, TRUE);
+    }
+}
+
+void EnableDarkAppMode() {
+    const auto setPreferredAppMode =
+        reinterpret_cast<SetPreferredAppModeFn>(UxThemeFunction(135));
+    if (setPreferredAppMode) {
+        setPreferredAppMode(PreferredAppMode::ForceDark);
+    }
+}
+
+BOOL CALLBACK ThemeChild(HWND child, LPARAM) {
+    wchar_t className[16]{};
+    if (GetClassNameW(child, className, ARRAYSIZE(className)) &&
+        _wcsicmp(className, L"BUTTON") == 0) {
+        const LONG_PTR type =
+            GetWindowLongPtrW(child, GWL_STYLE) & BS_TYPEMASK;
+        if (type != BS_PUSHBUTTON && type != BS_DEFPUSHBUTTON) {
+            SetWindowTheme(child, L"", L"");
+            return TRUE;
+        }
+    }
+
+    AllowDarkMode(child);
+    SetWindowTheme(child, L"DarkMode_Explorer", nullptr);
+    return TRUE;
+}
+
+void ApplyDarkTheme(HWND window) {
+    const BOOL enabled = TRUE;
+    AllowDarkMode(window);
+    if (FAILED(DwmSetWindowAttribute(
+            window,
+            20,
+            &enabled,
+            sizeof(enabled)))) {
+        DwmSetWindowAttribute(
+            window,
+            19,
+            &enabled,
+            sizeof(enabled));
+    }
+    DwmSetWindowAttribute(
+        window, 35, &kWindowColor, sizeof(kWindowColor));
+    DwmSetWindowAttribute(
+        window, 36, &kTextColor, sizeof(kTextColor));
+    SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
+    EnumChildWindows(window, ThemeChild, 0);
+    RedrawWindow(
+        window,
+        nullptr,
+        nullptr,
+        RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
 }
 
 void Disconnect() {
@@ -809,10 +907,30 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         SendMessageW(gFireOff, BM_SETCHECK, BST_CHECKED, 0);
         UpdateRapidFireRateEnabled();
         SetActionButtonsEnabled(false);
+        ApplyDarkTheme(window);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
         return 0;
+    }
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN: {
+        const HDC deviceContext = reinterpret_cast<HDC>(wParam);
+        const HWND control = reinterpret_cast<HWND>(lParam);
+        SetTextColor(
+            deviceContext,
+            IsWindowEnabled(control) ? kTextColor : kMutedTextColor);
+        SetBkMode(deviceContext, TRANSPARENT);
+        return reinterpret_cast<LRESULT>(gWindowBrush);
+    }
+    case WM_CTLCOLOREDIT: {
+        const HDC deviceContext = reinterpret_cast<HDC>(wParam);
+        const HWND control = reinterpret_cast<HWND>(lParam);
+        SetTextColor(
+            deviceContext,
+            IsWindowEnabled(control) ? kTextColor : kMutedTextColor);
+        SetBkColor(deviceContext, kWindowColor);
+        return reinterpret_cast<LRESULT>(gWindowBrush);
     }
     case WM_TIMER:
         if (wParam == kTimerId) {
@@ -918,7 +1036,8 @@ bool SelfTest() {
     bool zeroDamage = false;
     bool allWeapons = false;
     int rapidFireRate = 0;
-    return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
+    return IsDarkPalette() &&
+           _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
            length == 28 &&
            std::strcmp(command, "STATE 1 0 1 1 1 0 1 1 0 1 8\n") == 0 &&
@@ -1012,6 +1131,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 1;
     }
 
+    EnableDarkAppMode();
+    gWindowBrush = CreateSolidBrush(kWindowColor);
+    if (!gWindowBrush) {
+        return 1;
+    }
+
     constexpr wchar_t kClassName[] = L"Hotd2RemakeTrainerWindow";
     WNDCLASSEXW windowClass{
         sizeof(windowClass),
@@ -1022,12 +1147,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         instance,
         LoadIconW(nullptr, IDI_APPLICATION),
         LoadCursorW(nullptr, IDC_ARROW),
-        reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1),
+        gWindowBrush,
         nullptr,
         kClassName,
         LoadIconW(nullptr, IDI_APPLICATION),
     };
     if (!RegisterClassExW(&windowClass)) {
+        DeleteObject(gWindowBrush);
         return 1;
     }
 
@@ -1045,6 +1171,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         instance,
         nullptr);
     if (!window) {
+        DeleteObject(gWindowBrush);
         return 1;
     }
 
@@ -1056,5 +1183,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    DeleteObject(gWindowBrush);
     return static_cast<int>(message.wParam);
 }
