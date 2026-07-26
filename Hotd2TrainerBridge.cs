@@ -10,7 +10,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 
-[BepInPlugin("local.hotd2remake.trainerbridge", "HotD2 Remake Trainer Bridge", "1.4.0")]
+[BepInPlugin("local.hotd2remake.trainerbridge", "HotD2 Remake Trainer Bridge", "1.5.0")]
 public sealed class Hotd2TrainerBridge : BaseUnityPlugin
 {
     private const string PipeName = "Hotd2RemakeTrainer";
@@ -48,6 +48,10 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private int desiredAmmo;
     private int desiredContinues;
     private int desiredOneShot;
+    private int desiredEasyBoss;
+    private int desiredZeroDamage;
+    private int desiredAllWeapons;
+    private int pendingActions;
     private int persistEnabled;
     private int frame;
 
@@ -55,11 +59,21 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private FieldInfo ammoField;
     private FieldInfo continuesField;
     private FieldInfo oneShotField;
+    private FieldInfo easyBossField;
+    private FieldInfo zeroDamageField;
+    private FieldInfo allWeaponsField;
     private FieldInfo allCheatsField;
+    private Type cheatType;
+    private MethodInfo toggleCheatMethod;
+    private MethodInfo getCheatStateMethod;
+    private PropertyInfo saveReadyProperty;
     private bool originalGodMode;
     private bool originalAmmo;
     private bool originalContinues;
     private bool originalOneShot;
+    private bool originalEasyBoss;
+    private bool originalZeroDamage;
+    private bool originalAllWeapons;
     private bool originalAllCheats;
 
     private ConfigEntry<bool> persistConfig;
@@ -70,12 +84,18 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private ConfigEntry<bool> rapidFireConfig;
     private ConfigEntry<int> rapidFireRateConfig;
     private ConfigEntry<bool> oneShotConfig;
+    private ConfigEntry<bool> easyBossConfig;
+    private ConfigEntry<bool> zeroDamageConfig;
+    private ConfigEntry<bool> allWeaponsConfig;
 
     private void Awake()
     {
         Type cheats = FindType("CR_Cheats");
         Type data = FindType("CR_Data");
-        if (cheats == null || data == null)
+        cheatType = FindType("CheatType");
+        Type saveDataHandler = FindType("MP_SaveDataHandler");
+        if (cheats == null || data == null ||
+            cheatType == null || saveDataHandler == null)
         {
             Logger.LogError("Trainer bridge: CR_Cheats/CR_Data not found.");
             return;
@@ -85,10 +105,19 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         ammoField = cheats.GetField("<isCheatInfiniteAmmoActive>k__BackingField", StaticField);
         continuesField = cheats.GetField("<isCheatUnlimitedTokensActive>k__BackingField", StaticField);
         oneShotField = cheats.GetField("<isCheatOneShotModeActive>k__BackingField", StaticField);
+        easyBossField = cheats.GetField("<isCheatEasyBossModeActive>k__BackingField", StaticField);
+        zeroDamageField = cheats.GetField("<isCheatZeroDamageActive>k__BackingField", StaticField);
+        allWeaponsField = cheats.GetField("<isCheatAllWeaponsUnlockedActive>k__BackingField", StaticField);
         allCheatsField = data.GetField("ARE_ALL_CHEATS_ENABLED", StaticField);
+        toggleCheatMethod = cheats.GetMethod("ToggleCheat", StaticField);
+        getCheatStateMethod = cheats.GetMethod("GetCheatState", StaticField);
+        saveReadyProperty = saveDataHandler.GetProperty("IsReady", StaticField);
         if (godModeField == null || ammoField == null ||
             continuesField == null || oneShotField == null ||
-            allCheatsField == null)
+            easyBossField == null || zeroDamageField == null ||
+            allWeaponsField == null || allCheatsField == null ||
+            toggleCheatMethod == null || getCheatStateMethod == null ||
+            saveReadyProperty == null)
         {
             Logger.LogError("Trainer bridge: expected cheat fields not found.");
             return;
@@ -98,6 +127,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         originalAmmo = Read(ammoField);
         originalContinues = Read(continuesField);
         originalOneShot = Read(oneShotField);
+        originalEasyBoss = Read(easyBossField);
+        originalZeroDamage = Read(zeroDamageField);
+        originalAllWeapons = Read(allWeaponsField);
         originalAllCheats = Read(allCheatsField);
         BindConfig();
         LoadConfig();
@@ -124,6 +156,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
             "RapidFireRate",
             DefaultRapidFireRate);
         oneShotConfig = Config.Bind("Cheats", "OneShot", false);
+        easyBossConfig = Config.Bind("Cheats", "EasyBoss", false);
+        zeroDamageConfig = Config.Bind("Cheats", "ZeroDamage", false);
+        allWeaponsConfig = Config.Bind("Cheats", "AllWeapons", false);
     }
 
     private void LoadConfig()
@@ -137,6 +172,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         Interlocked.Exchange(ref desiredAmmo, ammoConfig.Value ? 1 : 0);
         Interlocked.Exchange(ref desiredContinues, continuesConfig.Value ? 1 : 0);
         Interlocked.Exchange(ref desiredOneShot, oneShotConfig.Value ? 1 : 0);
+        Interlocked.Exchange(ref desiredEasyBoss, easyBossConfig.Value ? 1 : 0);
+        Interlocked.Exchange(ref desiredZeroDamage, zeroDamageConfig.Value ? 1 : 0);
+        Interlocked.Exchange(ref desiredAllWeapons, allWeaponsConfig.Value ? 1 : 0);
         Interlocked.Exchange(ref autoFireEnabled, autoFire ? 1 : 0);
         Interlocked.Exchange(
             ref rapidFireEnabled,
@@ -155,6 +193,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         bool persist,
         bool rapidFire,
         bool oneShot,
+        bool easyBoss,
+        bool zeroDamage,
+        bool allWeapons,
         int rate)
     {
         godModeConfig.Value = godMode;
@@ -165,6 +206,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         rapidFireConfig.Value = rapidFire;
         rapidFireRateConfig.Value = rate;
         oneShotConfig.Value = oneShot;
+        easyBossConfig.Value = easyBoss;
+        zeroDamageConfig.Value = zeroDamage;
+        allWeaponsConfig.Value = allWeapons;
         Config.Save();
     }
 
@@ -279,14 +323,25 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         bool rapidFire = Interlocked.CompareExchange(ref rapidFireEnabled, 0, 0) != 0;
         int rate = Interlocked.CompareExchange(ref rapidFireRate, 0, 0);
         bool oneShot = Interlocked.CompareExchange(ref desiredOneShot, 0, 0) != 0;
+        bool easyBoss = Interlocked.CompareExchange(ref desiredEasyBoss, 0, 0) != 0;
+        bool zeroDamage = Interlocked.CompareExchange(ref desiredZeroDamage, 0, 0) != 0;
+        bool allWeapons = Interlocked.CompareExchange(ref desiredAllWeapons, 0, 0) != 0;
         bool persist = Interlocked.CompareExchange(ref persistEnabled, 0, 0) != 0;
-        bool any = godMode || ammo || continues || oneShot;
+        int actions = Interlocked.Exchange(ref pendingActions, 0);
+        bool any = godMode || ammo || continues || oneShot ||
+            easyBoss || zeroDamage || allWeapons || actions != 0;
 
         allCheatsField.SetValue(null, originalAllCheats || any);
         godModeField.SetValue(null, godMode);
         ammoField.SetValue(null, ammo);
         continuesField.SetValue(null, continues);
         oneShotField.SetValue(null, oneShot);
+        easyBossField.SetValue(null, easyBoss);
+        zeroDamageField.SetValue(null, zeroDamage);
+        allWeaponsField.SetValue(null, allWeapons);
+
+        if (actions != 0)
+            ApplyUnlockActions(actions);
 
         if (changed && Interlocked.Exchange(ref savePending, 0) != 0)
         {
@@ -298,6 +353,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
                 persist,
                 rapidFire,
                 oneShot,
+                easyBoss,
+                zeroDamage,
+                allWeapons,
                 rate);
         }
     }
@@ -322,6 +380,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
             ammoField.SetValue(null, originalAmmo);
             continuesField.SetValue(null, originalContinues);
             oneShotField.SetValue(null, originalOneShot);
+            easyBossField.SetValue(null, originalEasyBoss);
+            zeroDamageField.SetValue(null, originalZeroDamage);
+            allWeaponsField.SetValue(null, originalAllWeapons);
             allCheatsField.SetValue(null, originalAllCheats);
         }
     }
@@ -372,7 +433,7 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private void WriteState(Stream server)
     {
         string state = String.Format(
-            "STATE {0} {1} {2} {3} {4} {5} {6} {7}\n",
+            "STATE {0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10}\n",
             Interlocked.CompareExchange(ref desiredGodMode, 0, 0),
             Interlocked.CompareExchange(ref desiredAmmo, 0, 0),
             Interlocked.CompareExchange(ref desiredContinues, 0, 0),
@@ -380,6 +441,9 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
             Interlocked.CompareExchange(ref persistEnabled, 0, 0),
             Interlocked.CompareExchange(ref rapidFireEnabled, 0, 0),
             Interlocked.CompareExchange(ref desiredOneShot, 0, 0),
+            Interlocked.CompareExchange(ref desiredEasyBoss, 0, 0),
+            Interlocked.CompareExchange(ref desiredZeroDamage, 0, 0),
+            Interlocked.CompareExchange(ref desiredAllWeapons, 0, 0),
             Interlocked.CompareExchange(ref rapidFireRate, 0, 0));
         byte[] bytes = Encoding.ASCII.GetBytes(state);
         server.Write(bytes, 0, bytes.Length);
@@ -389,6 +453,18 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
     private void Parse(string line)
     {
         string[] parts = line.Split(' ');
+        if (parts.Length == 2 && parts[0] == "ACTION")
+        {
+            int action;
+            if (Int32.TryParse(parts[1], out action) &&
+                IsUnlockAction(action))
+            {
+                QueueActions(1 << action);
+                Interlocked.Exchange(ref dirty, 1);
+            }
+            return;
+        }
+
         int godMode = 0;
         int ammo = 0;
         int continues = 0;
@@ -396,10 +472,13 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         int persist = 0;
         int rapidFire = 0;
         int oneShot = 0;
+        int easyBoss = 0;
+        int zeroDamage = 0;
+        int allWeapons = 0;
         int rate = DefaultRapidFireRate;
         if ((parts.Length != 4 && parts.Length != 5 &&
              parts.Length != 6 && parts.Length != 8 &&
-             parts.Length != 9) ||
+             parts.Length != 9 && parts.Length != 12) ||
             parts[0] != "STATE" ||
             !TryBit(parts[1], out godMode) ||
             !TryBit(parts[2], out ammo) ||
@@ -409,6 +488,10 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
             (parts.Length >= 8 && !TryBit(parts[6], out rapidFire)) ||
             (parts.Length >= 8 && !TryBit(parts[7], out oneShot)) ||
             (parts.Length == 9 && !TryRate(parts[8], out rate)) ||
+            (parts.Length == 12 && !TryBit(parts[8], out easyBoss)) ||
+            (parts.Length == 12 && !TryBit(parts[9], out zeroDamage)) ||
+            (parts.Length == 12 && !TryBit(parts[10], out allWeapons)) ||
+            (parts.Length == 12 && !TryRate(parts[11], out rate)) ||
             (autoFire != 0 && rapidFire != 0))
             return;
 
@@ -423,6 +506,12 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
             Interlocked.Exchange(ref rapidFireEnabled, rapidFire) != rapidFire;
         changed |=
             Interlocked.Exchange(ref desiredOneShot, oneShot) != oneShot;
+        changed |=
+            Interlocked.Exchange(ref desiredEasyBoss, easyBoss) != easyBoss;
+        changed |=
+            Interlocked.Exchange(ref desiredZeroDamage, zeroDamage) != zeroDamage;
+        changed |=
+            Interlocked.Exchange(ref desiredAllWeapons, allWeapons) != allWeapons;
         changed |= Interlocked.Exchange(ref rapidFireRate, rate) != rate;
         changed |= Interlocked.Exchange(ref persistEnabled, persist) != persist;
         if (!changed)
@@ -432,6 +521,58 @@ public sealed class Hotd2TrainerBridge : BaseUnityPlugin
         Interlocked.Exchange(ref dirty, 1);
     }
 
+    private static bool IsUnlockAction(int action)
+    {
+        return action == 7 || action == 9 || action == 11 ||
+            action == 13 || action == 15 || action == 16 ||
+            action == 17 || action == 18;
+    }
+
+    private void QueueActions(int actions)
+    {
+        int current;
+        do
+        {
+            current = Interlocked.CompareExchange(ref pendingActions, 0, 0);
+        }
+        while (Interlocked.CompareExchange(
+            ref pendingActions,
+            current | actions,
+            current) != current);
+    }
+
+    private void ApplyUnlockActions(int actions)
+    {
+        if (!(bool)saveReadyProperty.GetValue(null, null))
+        {
+            QueueActions(actions);
+            Interlocked.Exchange(ref dirty, 1);
+            return;
+        }
+
+        for (int action = 1; action <= 18; action++)
+        {
+            if ((actions & (1 << action)) == 0)
+                continue;
+
+            object value = Enum.ToObject(cheatType, action);
+            try
+            {
+                if (!(bool)getCheatStateMethod.Invoke(
+                    null, new object[] { value }))
+                {
+                    toggleCheatMethod.Invoke(null, new object[] { value });
+                }
+                Logger.LogInfo("Trainer bridge: unlock action " + action + " applied.");
+            }
+            catch (Exception exception)
+            {
+                Logger.LogWarning(
+                    "Trainer bridge: unlock action " + action +
+                    " failed: " + exception.Message);
+            }
+        }
+    }
     private static bool TryBit(string text, out int value)
     {
         return Int32.TryParse(text, out value) && (value == 0 || value == 1);
