@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 foreach ($line in $environment) {
-    if ($line -match '^([^=]+)=(.*)$' -and $matches[1] -cne 'Path') {
+    if ($line -match '^([^=]+)=(.*)$') {
         Set-Item -LiteralPath "Env:$($matches[1])" -Value $matches[2]
     }
 }
