@@ -16,6 +16,16 @@ controls, cheat behavior, persistence, or bridge communication.
   theme to common controls.
 - Delete the brush during shutdown.
 
+## Artwork Header
+
+- Embed the supplied JPEG in the trainer executable; no sidecar asset.
+- Draw a 220-pixel header across the client width using aspect-preserving
+  cover scaling.
+- Anchor the source crop at its top edge.
+- Fade the bottom 70 pixels into the existing dark background.
+- Shift the existing controls down 200 pixels and increase window height by
+  the same amount. Cheat behavior and bridge communication stay unchanged.
+
 ## Verification
 
 - Extend `--self-test` to exercise the palette contract before implementation.
@@ -23,9 +33,11 @@ controls, cheat behavior, persistence, or bridge communication.
 - Launch the trainer and capture the rendered window to verify dark background,
   readable text, disabled states, groups, buttons, radios, checkboxes, and
   spinner.
+- Verify the embedded header renders from a standalone executable, uses the top
+  crop, fades into the dark background, and leaves every control visible.
 
 ## Constraints
 
 - No new dependency.
-- No layout or behavior changes.
+- Header-only layout shift; existing control sizes and behavior stay unchanged.
 - Windows 10/11 only, matching the existing application.

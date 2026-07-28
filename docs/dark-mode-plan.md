@@ -28,37 +28,85 @@ color messages and Windows dark-theme APIs.
 - Consumes: existing `WindowProc`, child control handles, and `SelfTest`.
 - Produces: `ApplyDarkTheme(HWND)` and dark control painting.
 
-- [ ] **Step 1: Write the failing self-test**
+- [x] **Step 1: Write the failing self-test**
 
 Add a palette invariant to `SelfTest()` that calls `IsDarkPalette()` and
 requires the background luminance to be below the text luminance.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.\build.ps1; .\dist\Hotd2RemakeTrainer.exe --self-test`
 
 Expected: compiler failure because `IsDarkPalette` does not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add fixed color constants, the palette invariant, one background brush,
 `WM_CTLCOLORSTATIC` / `WM_CTLCOLOREDIT` / `WM_CTLCOLORBTN` handlers,
 `SetWindowTheme` calls for native controls, `DwmSetWindowAttribute` for the
 title bar, and brush cleanup. Link `uxtheme.lib` and `dwmapi.lib`.
 
-- [ ] **Step 4: Run automated verification**
+- [x] **Step 4: Run automated verification**
 
 Run: `.\build.ps1; .\dist\Hotd2RemakeTrainer.exe --self-test`
 
 Expected: build exit 0 and self-test exit 0.
 
-- [ ] **Step 5: Verify rendered UI**
+- [x] **Step 5: Verify rendered UI**
 
 Launch `dist\Hotd2RemakeTrainer.exe`, capture its window, and inspect the
 background, text, disabled buttons, checkboxes, radio buttons, group boxes,
 and spinner.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Stage only `Hotd2RemakeTrainer.cpp`, `build.ps1`, and this plan. Commit:
 `feat: add native dark theme`.
+
+---
+
+### Task 2: Embedded artwork header
+
+**Files:**
+- Create: `assets/hotd2-header.jpg`
+- Create: `Hotd2TrainerResources.h`
+- Create: `Hotd2TrainerResources.rc`
+- Modify: `Hotd2RemakeTrainer.cpp`
+- Modify: `build.ps1`
+- Modify: `dist/Hotd2RemakeTrainer.exe`
+
+**Interfaces:**
+- Consumes: `IDR_HEADER_JPG`, the existing dark background color, and
+  `WindowProc`.
+- Produces: `CalculateTopCoverCrop(...)`, embedded JPEG loading, and header
+  painting during `WM_PAINT`.
+
+- [ ] **Step 1: Write the failing crop test**
+
+Extend `SelfTest()` with hand-calculated assertions that a 1280x733 image
+covering a 776x220 banner yields source rectangle `(0, 0, 1280, 363)`.
+
+- [ ] **Step 2: Verify red**
+
+Run: `.\build.ps1`
+
+Expected: compiler failure because `CalculateTopCoverCrop` does not exist.
+
+- [ ] **Step 3: Add embedded resource and renderer**
+
+Copy the supplied JPEG to `assets/hotd2-header.jpg`. Compile it as `RCDATA`.
+Use Windows GDI+ to decode the embedded JPEG once, draw the top-anchored cover
+crop at 220 pixels high, then overlay a 70-pixel dark gradient. Shift existing
+controls and window height down 200 pixels.
+
+- [ ] **Step 4: Verify green**
+
+Run: `.\build.ps1; .\dist\Hotd2RemakeTrainer.exe --self-test`
+
+Expected: build exit 0, zero warnings, self-test exit 0, and no external image
+beside the executable.
+
+- [ ] **Step 5: Verify rendered UI**
+
+Launch `dist\Hotd2RemakeTrainer.exe`; capture and inspect the header crop,
+gradient, dark theme, full control layout, and 776-pixel client width.
