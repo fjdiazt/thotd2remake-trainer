@@ -6,6 +6,8 @@
 #include <shellapi.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <gdiplus.h>
+#include <objidl.h>
 #include <uxtheme.h>
 
 #pragma comment( \
@@ -27,6 +29,10 @@ constexpr UINT kTimerIntervalMs = 250;
 constexpr int kMinRapidFireRate = 2;
 constexpr int kMaxRapidFireRate = 16;
 constexpr int kDefaultRapidFireRate = 8;
+constexpr int kHeaderResourceId = 101;
+constexpr int kHeaderHeight = 220;
+constexpr int kHeaderFadeHeight = 70;
+constexpr int kContentOffset = 200;
 
 constexpr COLORREF kWindowColor = RGB(24, 24, 27);
 constexpr COLORREF kTextColor = RGB(244, 244, 245);
@@ -80,6 +86,9 @@ HANDLE gPipe = INVALID_HANDLE_VALUE;
 bool gLocalStatePending = false;
 bool gApplyingState = false;
 HBRUSH gWindowBrush = nullptr;
+ULONG_PTR gGdiPlusToken = 0;
+IStream* gHeaderStream = nullptr;
+Gdiplus::Image* gHeaderImage = nullptr;
 
 void SetStatus(const wchar_t* text) {
     SetWindowTextW(gStatus, text);
@@ -91,6 +100,136 @@ int Brightness(COLORREF color) {
 
 bool IsDarkPalette() {
     return Brightness(kWindowColor) < Brightness(kTextColor);
+}
+
+struct CropRect {
+    UINT x;
+    UINT y;
+    UINT width;
+    UINT height;
+};
+
+CropRect CalculateTopCoverCrop(
+    UINT sourceWidth,
+    UINT destinationWidth,
+    UINT destinationHeight) {
+    // ponytail: fixed wide banner; add horizontal crop if window becomes resizable.
+    const UINT height = static_cast<UINT>(
+        (static_cast<UINT64>(sourceWidth) * destinationHeight +
+         destinationWidth - 1) /
+        destinationWidth);
+    return {0, 0, sourceWidth, height};
+}
+
+bool InitializeHeaderImage(HINSTANCE instance) {
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&gGdiPlusToken, &input, nullptr) !=
+        Gdiplus::Ok) {
+        return false;
+    }
+
+    const HRSRC resource = FindResourceW(
+        instance, MAKEINTRESOURCEW(kHeaderResourceId), RT_RCDATA);
+    if (!resource) {
+        return false;
+    }
+    const HGLOBAL loaded = LoadResource(instance, resource);
+    const DWORD size = SizeofResource(instance, resource);
+    const void* source = loaded ? LockResource(loaded) : nullptr;
+    if (!source || !size) {
+        return false;
+    }
+
+    const HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
+    void* destination = copy ? GlobalLock(copy) : nullptr;
+    if (!destination) {
+        if (copy) {
+            GlobalFree(copy);
+        }
+        return false;
+    }
+    std::memcpy(destination, source, size);
+    GlobalUnlock(copy);
+
+    if (FAILED(CreateStreamOnHGlobal(copy, TRUE, &gHeaderStream))) {
+        GlobalFree(copy);
+        return false;
+    }
+    gHeaderImage = Gdiplus::Image::FromStream(gHeaderStream);
+    if (!gHeaderImage || gHeaderImage->GetLastStatus() != Gdiplus::Ok) {
+        delete gHeaderImage;
+        gHeaderImage = nullptr;
+        gHeaderStream->Release();
+        gHeaderStream = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void ShutdownHeaderImage() {
+    delete gHeaderImage;
+    gHeaderImage = nullptr;
+    if (gHeaderStream) {
+        gHeaderStream->Release();
+        gHeaderStream = nullptr;
+    }
+    if (gGdiPlusToken) {
+        Gdiplus::GdiplusShutdown(gGdiPlusToken);
+        gGdiPlusToken = 0;
+    }
+}
+
+void DrawHeader(HDC deviceContext, int width) {
+    if (!gHeaderImage || width <= 0) {
+        return;
+    }
+
+    Gdiplus::Graphics graphics(deviceContext);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    const CropRect crop = CalculateTopCoverCrop(
+        gHeaderImage->GetWidth(),
+        static_cast<UINT>(width),
+        kHeaderHeight);
+    graphics.DrawImage(
+        gHeaderImage,
+        Gdiplus::Rect(0, 0, width, kHeaderHeight),
+        crop.x,
+        crop.y,
+        crop.width,
+        crop.height,
+        Gdiplus::UnitPixel);
+
+    Gdiplus::LinearGradientBrush fade(
+        Gdiplus::Point(0, kHeaderHeight - kHeaderFadeHeight),
+        Gdiplus::Point(0, kHeaderHeight),
+        Gdiplus::Color(0, 24, 24, 27),
+        Gdiplus::Color(255, 24, 24, 27));
+    graphics.FillRectangle(
+        &fade,
+        0,
+        kHeaderHeight - kHeaderFadeHeight,
+        width,
+        kHeaderFadeHeight);
+}
+
+void ShiftChildrenDown(HWND parent) {
+    for (HWND child = GetWindow(parent, GW_CHILD); child;
+         child = GetWindow(child, GW_HWNDNEXT)) {
+        RECT bounds{};
+        if (!GetWindowRect(child, &bounds)) {
+            continue;
+        }
+        POINT origin{bounds.left, bounds.top};
+        ScreenToClient(parent, &origin);
+        SetWindowPos(
+            child,
+            nullptr,
+            origin.x,
+            origin.y + kContentOffset,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+    }
 }
 
 enum class PreferredAppMode {
@@ -907,10 +1046,21 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         SendMessageW(gFireOff, BM_SETCHECK, BST_CHECKED, 0);
         UpdateRapidFireRateEnabled();
         SetActionButtonsEnabled(false);
+        ShiftChildrenDown(window);
         ApplyDarkTheme(window);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
+        return 0;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        const HDC deviceContext = BeginPaint(window, &paint);
+        RECT client{};
+        GetClientRect(window, &client);
+        FillRect(deviceContext, &client, gWindowBrush);
+        DrawHeader(deviceContext, client.right);
+        EndPaint(window, &paint);
         return 0;
     }
     case WM_CTLCOLORSTATIC:
@@ -1036,7 +1186,10 @@ bool SelfTest() {
     bool zeroDamage = false;
     bool allWeapons = false;
     int rapidFireRate = 0;
+    const auto headerCrop = CalculateTopCoverCrop(1280, 776, 220);
     return IsDarkPalette() &&
+           headerCrop.x == 0 && headerCrop.y == 0 &&
+           headerCrop.width == 1280 && headerCrop.height == 363 &&
            _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
            length == 28 &&
@@ -1156,6 +1309,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         DeleteObject(gWindowBrush);
         return 1;
     }
+    InitializeHeaderImage(instance);
 
     const HWND window = CreateWindowExW(
         0,
@@ -1165,12 +1319,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         790,
-        570,
+        770,
         nullptr,
         nullptr,
         instance,
         nullptr);
     if (!window) {
+        ShutdownHeaderImage();
         DeleteObject(gWindowBrush);
         return 1;
     }
@@ -1183,6 +1338,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    ShutdownHeaderImage();
     DeleteObject(gWindowBrush);
     return static_cast<int>(message.wParam);
 }

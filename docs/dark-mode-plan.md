@@ -69,7 +69,6 @@ Stage only `Hotd2RemakeTrainer.cpp`, `build.ps1`, and this plan. Commit:
 
 **Files:**
 - Create: `assets/hotd2-header.jpg`
-- Create: `Hotd2TrainerResources.h`
 - Create: `Hotd2TrainerResources.rc`
 - Modify: `Hotd2RemakeTrainer.cpp`
 - Modify: `build.ps1`
@@ -81,32 +80,37 @@ Stage only `Hotd2RemakeTrainer.cpp`, `build.ps1`, and this plan. Commit:
 - Produces: `CalculateTopCoverCrop(...)`, embedded JPEG loading, and header
   painting during `WM_PAINT`.
 
-- [ ] **Step 1: Write the failing crop test**
+- [x] **Step 1: Write the failing crop test**
 
 Extend `SelfTest()` with hand-calculated assertions that a 1280x733 image
 covering a 776x220 banner yields source rectangle `(0, 0, 1280, 363)`.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.\build.ps1`
 
 Expected: compiler failure because `CalculateTopCoverCrop` does not exist.
 
-- [ ] **Step 3: Add embedded resource and renderer**
+- [x] **Step 3: Add embedded resource and renderer**
 
 Copy the supplied JPEG to `assets/hotd2-header.jpg`. Compile it as `RCDATA`.
 Use Windows GDI+ to decode the embedded JPEG once, draw the top-anchored cover
 crop at 220 pixels high, then overlay a 70-pixel dark gradient. Shift existing
 controls and window height down 200 pixels.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `.\build.ps1; .\dist\Hotd2RemakeTrainer.exe --self-test`
 
 Expected: build exit 0, zero warnings, self-test exit 0, and no external image
 beside the executable.
 
-- [ ] **Step 5: Verify rendered UI**
+- [x] **Step 5: Verify rendered UI**
 
 Launch `dist\Hotd2RemakeTrainer.exe`; capture and inspect the header crop,
 gradient, dark theme, full control layout, and 776-pixel client width.
+
+- [x] **Step 6: Commit**
+
+Stage the source, embedded JPEG, resource script, build output, executable,
+and plan. Commit: `feat: add faded artwork header`.
