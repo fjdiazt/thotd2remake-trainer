@@ -4,4 +4,6 @@ bin/
 *.user
 *.suo
 docs/superpowers/
+docs/
+*.[cC][tT]
 .worktrees/
