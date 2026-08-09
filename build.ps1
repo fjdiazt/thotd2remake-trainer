@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 foreach ($line in $environment) {
-    if ($line -match '^([^=]+)=(.*)$' -and $matches[1] -cne 'Path') {
+    if ($line -match '^([^=]+)=(.*)$') {
         Set-Item -LiteralPath "Env:$($matches[1])" -Value $matches[2]
     }
 }
@@ -55,13 +55,21 @@ Copy-Item -LiteralPath (Join-Path $bridgeBuild 'Hotd2TrainerBridge.dll') `
     -Force
 
 $trainerSource = Join-Path $root 'Hotd2RemakeTrainer.cpp'
+$trainerResourceSource = Join-Path $root 'Hotd2TrainerResources.rc'
 $trainerOutput = Join-Path $dist 'Hotd2RemakeTrainer.exe'
 $trainerObject = Join-Path $obj 'Hotd2RemakeTrainer.obj'
+$trainerResource = Join-Path $obj 'Hotd2TrainerResources.res'
+
+& rc.exe /nologo "/fo$trainerResource" $trainerResourceSource
+if ($LASTEXITCODE -ne 0) {
+    throw "Trainer resource build failed with exit code $LASTEXITCODE."
+}
 
 & $cl /nologo /std:c++17 /O2 /MT /W4 /EHsc `
-    "/Fo:$trainerObject" "/Fe:$trainerOutput" $trainerSource `
-    /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF `
-    user32.lib kernel32.lib shell32.lib gdi32.lib comctl32.lib
+    "/Fo:$trainerObject" "/Fe:$trainerOutput" $trainerSource $trainerResource `
+    /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /MANIFEST:EMBED `
+    user32.lib kernel32.lib shell32.lib gdi32.lib comctl32.lib `
+    uxtheme.lib dwmapi.lib gdiplus.lib ole32.lib
 if ($LASTEXITCODE -ne 0) {
     throw "Trainer build failed with exit code $LASTEXITCODE."
 }

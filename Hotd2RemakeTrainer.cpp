@@ -5,6 +5,16 @@
 #include <tlhelp32.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <dwmapi.h>
+#include <gdiplus.h>
+#include <objidl.h>
+#include <uxtheme.h>
+
+#pragma comment( \
+    linker, \
+    "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' " \
+    "version='6.0.0.0' processorArchitecture='*' " \
+    "publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include <cstdio>
 #include <cstring>
@@ -19,6 +29,14 @@ constexpr UINT kTimerIntervalMs = 250;
 constexpr int kMinRapidFireRate = 2;
 constexpr int kMaxRapidFireRate = 16;
 constexpr int kDefaultRapidFireRate = 8;
+constexpr int kHeaderResourceId = 101;
+constexpr int kHeaderHeight = 220;
+constexpr int kHeaderFadeHeight = 70;
+constexpr int kContentOffset = 200;
+
+constexpr COLORREF kWindowColor = RGB(24, 24, 27);
+constexpr COLORREF kTextColor = RGB(244, 244, 245);
+constexpr COLORREF kMutedTextColor = RGB(161, 161, 170);
 
 enum ControlId {
     GodModeCheckbox = 1001,
@@ -67,9 +85,228 @@ HWND gActionButtons[8]{};
 HANDLE gPipe = INVALID_HANDLE_VALUE;
 bool gLocalStatePending = false;
 bool gApplyingState = false;
+HBRUSH gWindowBrush = nullptr;
+ULONG_PTR gGdiPlusToken = 0;
+IStream* gHeaderStream = nullptr;
+Gdiplus::Image* gHeaderImage = nullptr;
 
 void SetStatus(const wchar_t* text) {
     SetWindowTextW(gStatus, text);
+}
+
+int Brightness(COLORREF color) {
+    return (color & 0xff) + ((color >> 8) & 0xff) + ((color >> 16) & 0xff);
+}
+
+bool IsDarkPalette() {
+    return Brightness(kWindowColor) < Brightness(kTextColor);
+}
+
+struct CropRect {
+    UINT x;
+    UINT y;
+    UINT width;
+    UINT height;
+};
+
+CropRect CalculateTopCoverCrop(
+    UINT sourceWidth,
+    UINT destinationWidth,
+    UINT destinationHeight) {
+    // ponytail: fixed wide banner; add horizontal crop if window becomes resizable.
+    const UINT height = static_cast<UINT>(
+        (static_cast<UINT64>(sourceWidth) * destinationHeight +
+         destinationWidth - 1) /
+        destinationWidth);
+    return {0, 0, sourceWidth, height};
+}
+
+bool InitializeHeaderImage(HINSTANCE instance) {
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&gGdiPlusToken, &input, nullptr) !=
+        Gdiplus::Ok) {
+        return false;
+    }
+
+    const HRSRC resource = FindResourceW(
+        instance, MAKEINTRESOURCEW(kHeaderResourceId), RT_RCDATA);
+    if (!resource) {
+        return false;
+    }
+    const HGLOBAL loaded = LoadResource(instance, resource);
+    const DWORD size = SizeofResource(instance, resource);
+    const void* source = loaded ? LockResource(loaded) : nullptr;
+    if (!source || !size) {
+        return false;
+    }
+
+    const HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
+    void* destination = copy ? GlobalLock(copy) : nullptr;
+    if (!destination) {
+        if (copy) {
+            GlobalFree(copy);
+        }
+        return false;
+    }
+    std::memcpy(destination, source, size);
+    GlobalUnlock(copy);
+
+    if (FAILED(CreateStreamOnHGlobal(copy, TRUE, &gHeaderStream))) {
+        GlobalFree(copy);
+        return false;
+    }
+    gHeaderImage = Gdiplus::Image::FromStream(gHeaderStream);
+    if (!gHeaderImage || gHeaderImage->GetLastStatus() != Gdiplus::Ok) {
+        delete gHeaderImage;
+        gHeaderImage = nullptr;
+        gHeaderStream->Release();
+        gHeaderStream = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void ShutdownHeaderImage() {
+    delete gHeaderImage;
+    gHeaderImage = nullptr;
+    if (gHeaderStream) {
+        gHeaderStream->Release();
+        gHeaderStream = nullptr;
+    }
+    if (gGdiPlusToken) {
+        Gdiplus::GdiplusShutdown(gGdiPlusToken);
+        gGdiPlusToken = 0;
+    }
+}
+
+void DrawHeader(HDC deviceContext, int width) {
+    if (!gHeaderImage || width <= 0) {
+        return;
+    }
+
+    Gdiplus::Graphics graphics(deviceContext);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    const CropRect crop = CalculateTopCoverCrop(
+        gHeaderImage->GetWidth(),
+        static_cast<UINT>(width),
+        kHeaderHeight);
+    graphics.DrawImage(
+        gHeaderImage,
+        Gdiplus::Rect(0, 0, width, kHeaderHeight),
+        crop.x,
+        crop.y,
+        crop.width,
+        crop.height,
+        Gdiplus::UnitPixel);
+
+    Gdiplus::LinearGradientBrush fade(
+        Gdiplus::Point(0, kHeaderHeight - kHeaderFadeHeight),
+        Gdiplus::Point(0, kHeaderHeight),
+        Gdiplus::Color(0, 24, 24, 27),
+        Gdiplus::Color(255, 24, 24, 27));
+    graphics.FillRectangle(
+        &fade,
+        0,
+        kHeaderHeight - kHeaderFadeHeight,
+        width,
+        kHeaderFadeHeight);
+}
+
+void ShiftChildrenDown(HWND parent) {
+    for (HWND child = GetWindow(parent, GW_CHILD); child;
+         child = GetWindow(child, GW_HWNDNEXT)) {
+        RECT bounds{};
+        if (!GetWindowRect(child, &bounds)) {
+            continue;
+        }
+        POINT origin{bounds.left, bounds.top};
+        ScreenToClient(parent, &origin);
+        SetWindowPos(
+            child,
+            nullptr,
+            origin.x,
+            origin.y + kContentOffset,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+    }
+}
+
+enum class PreferredAppMode {
+    Default,
+    AllowDark,
+    ForceDark,
+    ForceLight,
+    Max,
+};
+
+using AllowDarkModeForWindowFn = BOOL(WINAPI*)(HWND, BOOL);
+using SetPreferredAppModeFn =
+    PreferredAppMode(WINAPI*)(PreferredAppMode);
+
+FARPROC UxThemeFunction(WORD ordinal) {
+    const HMODULE module = GetModuleHandleW(L"uxtheme.dll");
+    return module ? GetProcAddress(module, MAKEINTRESOURCEA(ordinal)) : nullptr;
+}
+
+void AllowDarkMode(HWND window) {
+    static const auto allowDarkModeForWindow =
+        reinterpret_cast<AllowDarkModeForWindowFn>(UxThemeFunction(133));
+    if (allowDarkModeForWindow) {
+        allowDarkModeForWindow(window, TRUE);
+    }
+}
+
+void EnableDarkAppMode() {
+    const auto setPreferredAppMode =
+        reinterpret_cast<SetPreferredAppModeFn>(UxThemeFunction(135));
+    if (setPreferredAppMode) {
+        setPreferredAppMode(PreferredAppMode::ForceDark);
+    }
+}
+
+BOOL CALLBACK ThemeChild(HWND child, LPARAM) {
+    wchar_t className[16]{};
+    if (GetClassNameW(child, className, ARRAYSIZE(className)) &&
+        _wcsicmp(className, L"BUTTON") == 0) {
+        const LONG_PTR type =
+            GetWindowLongPtrW(child, GWL_STYLE) & BS_TYPEMASK;
+        if (type != BS_PUSHBUTTON && type != BS_DEFPUSHBUTTON) {
+            SetWindowTheme(child, L"", L"");
+            return TRUE;
+        }
+    }
+
+    AllowDarkMode(child);
+    SetWindowTheme(child, L"DarkMode_Explorer", nullptr);
+    return TRUE;
+}
+
+void ApplyDarkTheme(HWND window) {
+    const BOOL enabled = TRUE;
+    AllowDarkMode(window);
+    if (FAILED(DwmSetWindowAttribute(
+            window,
+            20,
+            &enabled,
+            sizeof(enabled)))) {
+        DwmSetWindowAttribute(
+            window,
+            19,
+            &enabled,
+            sizeof(enabled));
+    }
+    DwmSetWindowAttribute(
+        window, 35, &kWindowColor, sizeof(kWindowColor));
+    DwmSetWindowAttribute(
+        window, 36, &kTextColor, sizeof(kTextColor));
+    SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
+    EnumChildWindows(window, ThemeChild, 0);
+    RedrawWindow(
+        window,
+        nullptr,
+        nullptr,
+        RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
 }
 
 void Disconnect() {
@@ -809,10 +1046,41 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         SendMessageW(gFireOff, BM_SETCHECK, BST_CHECKED, 0);
         UpdateRapidFireRateEnabled();
         SetActionButtonsEnabled(false);
+        ShiftChildrenDown(window);
+        ApplyDarkTheme(window);
 
         SetTimer(window, kTimerId, kTimerIntervalMs, nullptr);
         Tick();
         return 0;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        const HDC deviceContext = BeginPaint(window, &paint);
+        RECT client{};
+        GetClientRect(window, &client);
+        FillRect(deviceContext, &client, gWindowBrush);
+        DrawHeader(deviceContext, client.right);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN: {
+        const HDC deviceContext = reinterpret_cast<HDC>(wParam);
+        const HWND control = reinterpret_cast<HWND>(lParam);
+        SetTextColor(
+            deviceContext,
+            IsWindowEnabled(control) ? kTextColor : kMutedTextColor);
+        SetBkMode(deviceContext, TRANSPARENT);
+        return reinterpret_cast<LRESULT>(gWindowBrush);
+    }
+    case WM_CTLCOLOREDIT: {
+        const HDC deviceContext = reinterpret_cast<HDC>(wParam);
+        const HWND control = reinterpret_cast<HWND>(lParam);
+        SetTextColor(
+            deviceContext,
+            IsWindowEnabled(control) ? kTextColor : kMutedTextColor);
+        SetBkColor(deviceContext, kWindowColor);
+        return reinterpret_cast<LRESULT>(gWindowBrush);
     }
     case WM_TIMER:
         if (wParam == kTimerId) {
@@ -918,7 +1186,11 @@ bool SelfTest() {
     bool zeroDamage = false;
     bool allWeapons = false;
     int rapidFireRate = 0;
-    return _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
+    const auto headerCrop = CalculateTopCoverCrop(1280, 776, 220);
+    return IsDarkPalette() &&
+           headerCrop.x == 0 && headerCrop.y == 0 &&
+           headerCrop.width == 1280 && headerCrop.height == 363 &&
+           _wcsicmp(kGameExe, L"THE HOUSE OF THE DEAD 2 Remake.exe") == 0 &&
            _wcsicmp(kPipePath, L"\\\\.\\pipe\\Hotd2RemakeTrainer") == 0 &&
            length == 28 &&
            std::strcmp(command, "STATE 1 0 1 1 1 0 1 1 0 1 8\n") == 0 &&
@@ -1012,6 +1284,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 1;
     }
 
+    EnableDarkAppMode();
+    gWindowBrush = CreateSolidBrush(kWindowColor);
+    if (!gWindowBrush) {
+        return 1;
+    }
+
     constexpr wchar_t kClassName[] = L"Hotd2RemakeTrainerWindow";
     WNDCLASSEXW windowClass{
         sizeof(windowClass),
@@ -1022,14 +1300,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         instance,
         LoadIconW(nullptr, IDI_APPLICATION),
         LoadCursorW(nullptr, IDC_ARROW),
-        reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1),
+        gWindowBrush,
         nullptr,
         kClassName,
         LoadIconW(nullptr, IDI_APPLICATION),
     };
     if (!RegisterClassExW(&windowClass)) {
+        DeleteObject(gWindowBrush);
         return 1;
     }
+    InitializeHeaderImage(instance);
 
     const HWND window = CreateWindowExW(
         0,
@@ -1039,12 +1319,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         790,
-        570,
+        770,
         nullptr,
         nullptr,
         instance,
         nullptr);
     if (!window) {
+        ShutdownHeaderImage();
+        DeleteObject(gWindowBrush);
         return 1;
     }
 
@@ -1056,5 +1338,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    ShutdownHeaderImage();
+    DeleteObject(gWindowBrush);
     return static_cast<int>(message.wParam);
 }
