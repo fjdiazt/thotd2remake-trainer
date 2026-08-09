@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - name: Check out main
@@ -21,10 +21,24 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build trainer
+        shell: pwsh
+        run: .\build.ps1 -SkipBridge
+
       - name: Verify release files
+        shell: pwsh
         run: |
-          test -s dist/Hotd2RemakeTrainer.exe
-          test -s dist/Hotd2TrainerBridge.dll
+          if ((Get-Item .\dist\Hotd2RemakeTrainer.exe).Length -eq 0) {
+            throw 'Trainer executable is empty.'
+          }
+          if ((Get-Item .\dist\Hotd2TrainerBridge.dll).Length -eq 0) {
+            throw 'Bridge DLL is empty.'
+          }
 
       - name: Select next version
         id: version
