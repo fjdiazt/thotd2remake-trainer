@@ -1,37 +1,13 @@
 param(
     [string]$GameRoot = 'S:\SteamLibrary\steamapps\common\THE HOUSE OF THE DEAD 2 Remake',
-    [switch]$Deploy
+    [switch]$Deploy,
+    [switch]$SkipBridge
 )
 
 $ErrorActionPreference = 'Stop'
 
-$vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
-if (-not (Test-Path -LiteralPath $vswhere)) {
-    throw 'Visual Studio Installer vswhere.exe not found.'
-}
-
-$visualStudio = & $vswhere -latest -products * `
-    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-    -property installationPath
-if (-not $visualStudio) {
-    throw 'Visual Studio C++ tools not found.'
-}
-
-$vcvars = Join-Path $visualStudio 'VC\Auxiliary\Build\vcvars64.bat'
-$environment = & $env:ComSpec /d /c "call `"$vcvars`" >nul && set"
-if ($LASTEXITCODE -ne 0) {
-    throw 'Failed to initialize Visual Studio x64 tools.'
-}
-
-foreach ($line in $environment) {
-    if ($line -match '^([^=]+)=(.*)$') {
-        Set-Item -LiteralPath "Env:$($matches[1])" -Value $matches[2]
-    }
-}
-
-$cl = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\cl.exe'
-if (-not (Test-Path -LiteralPath $cl)) {
-    throw "MSVC compiler not found: $cl"
+if ($Deploy -and $SkipBridge) {
+    throw 'Cannot use -Deploy with -SkipBridge.'
 }
 
 $root = $PSScriptRoot
@@ -39,39 +15,48 @@ $dist = Join-Path $root 'dist'
 $obj = Join-Path $root 'obj'
 New-Item -ItemType Directory -Force -Path $dist, $obj | Out-Null
 
+$trainerProject = Join-Path $root `
+    'src\Hotd2RemakeTrainer.App\Hotd2RemakeTrainer.App.csproj'
+$trainerTests = Join-Path $root `
+    'tests\Hotd2RemakeTrainer.Tests\Hotd2RemakeTrainer.Tests.csproj'
+$trainerBuild = Join-Path $obj 'trainer'
+$trainerOutput = Join-Path $dist 'Hotd2RemakeTrainer.exe'
+
+& dotnet run --project $trainerTests --configuration Release
+if ($LASTEXITCODE -ne 0) {
+    throw "Trainer tests failed with exit code $LASTEXITCODE."
+}
+
+& dotnet publish $trainerProject `
+    --configuration Release `
+    --runtime win-x64 `
+    --self-contained true `
+    --output $trainerBuild
+if ($LASTEXITCODE -ne 0) {
+    throw "Trainer publish failed with exit code $LASTEXITCODE."
+}
+Copy-Item -LiteralPath (Join-Path $trainerBuild 'Hotd2RemakeTrainer.exe') `
+    -Destination $trainerOutput `
+    -Force
+
 $bridgeProject = Join-Path $root 'Hotd2TrainerBridge.csproj'
 $bridgeOutput = Join-Path $dist 'Hotd2TrainerBridge.dll'
 $bridgeBuild = Join-Path $obj 'bridge'
 
-& dotnet build $bridgeProject `
-    --configuration Release `
-    --output $bridgeBuild `
-    "-p:GameRoot=$GameRoot"
-if ($LASTEXITCODE -ne 0) {
-    throw "Bridge build failed with exit code $LASTEXITCODE."
+if (-not $SkipBridge) {
+    & dotnet build $bridgeProject `
+        --configuration Release `
+        --output $bridgeBuild `
+        "-p:GameRoot=$GameRoot"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bridge build failed with exit code $LASTEXITCODE."
+    }
+    Copy-Item -LiteralPath (Join-Path $bridgeBuild 'Hotd2TrainerBridge.dll') `
+        -Destination $bridgeOutput `
+        -Force
 }
-Copy-Item -LiteralPath (Join-Path $bridgeBuild 'Hotd2TrainerBridge.dll') `
-    -Destination $bridgeOutput `
-    -Force
-
-$trainerSource = Join-Path $root 'Hotd2RemakeTrainer.cpp'
-$trainerResourceSource = Join-Path $root 'Hotd2TrainerResources.rc'
-$trainerOutput = Join-Path $dist 'Hotd2RemakeTrainer.exe'
-$trainerObject = Join-Path $obj 'Hotd2RemakeTrainer.obj'
-$trainerResource = Join-Path $obj 'Hotd2TrainerResources.res'
-
-& rc.exe /nologo "/fo$trainerResource" $trainerResourceSource
-if ($LASTEXITCODE -ne 0) {
-    throw "Trainer resource build failed with exit code $LASTEXITCODE."
-}
-
-& $cl /nologo /std:c++17 /O2 /MT /W4 /EHsc `
-    "/Fo:$trainerObject" "/Fe:$trainerOutput" $trainerSource $trainerResource `
-    /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /MANIFEST:EMBED `
-    user32.lib kernel32.lib shell32.lib gdi32.lib comctl32.lib `
-    uxtheme.lib dwmapi.lib gdiplus.lib ole32.lib
-if ($LASTEXITCODE -ne 0) {
-    throw "Trainer build failed with exit code $LASTEXITCODE."
+elseif (-not (Test-Path -LiteralPath $bridgeOutput)) {
+    throw "Committed bridge binary not found: $bridgeOutput"
 }
 
 if ($Deploy) {
@@ -84,4 +69,4 @@ if ($Deploy) {
 }
 
 Write-Host "Built $trainerOutput"
-Write-Host "Built $bridgeOutput"
+Write-Host "Ready $bridgeOutput"

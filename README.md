@@ -12,6 +12,12 @@ restarts**, choose the options once, and the bridge restores them on every
 later game launch; the trainer GUI does not need to be started again. No Cheat
 Engine or process-memory editor is required.
 
+The GUI uses the reusable `Vholf.Trainer.UI` WPF shell shared with other
+`vholf` trainers. Game-specific controls and BepInEx communication remain in
+this repository.
+
+![HotD2 Remake trainer interface](assets/trainer-ui.png)
+
 ## Features
 
 - Infinite Health
@@ -125,6 +131,13 @@ Saved state is stored in:
 <game folder>\BepInEx\config\local.hotd2remake.trainerbridge.cfg
 ```
 
+The GUI also remembers its last control state, including choices made before
+the game starts, in:
+
+```text
+%LOCALAPPDATA%\vholf\Hotd2RemakeTrainer\settings.json
+```
+
 ## Troubleshooting
 
 ### Waiting for Remake
@@ -152,7 +165,8 @@ The two files share a state protocol and should be updated together.
 ## Build from source
 
 Release binaries in `dist` need no developer tools. Building requires the
-.NET SDK, Visual Studio C++ tools, and a local game installation.
+.NET 8 SDK and a local game installation. The GUI pins the published
+`Vholf.Trainer.UI` package at version `0.1.0-ci.3`.
 
 ```powershell
 .\build.ps1
@@ -164,6 +178,26 @@ Outputs:
 dist\Hotd2RemakeTrainer.exe
 dist\Hotd2TrainerBridge.dll
 ```
+
+The build runs the protocol/session tests, publishes the WPF GUI as a
+self-contained Windows x64 single-file executable, then builds the BepInEx
+bridge. MSVC and a separately installed .NET runtime are not required.
+
+## Architecture
+
+- `src\Hotd2RemakeTrainer.App`: HotD-specific WPF panel, saved GUI state,
+  process detection, and named-pipe session.
+- `Vholf.Trainer.UI` `0.1.0-ci.3`: reusable window chrome, artwork panel,
+  status presentation, and consumer-content host.
+- `Hotd2TrainerBridge.cs`: in-game BepInEx plugin that owns cheat execution and
+  persistent gameplay state.
+- The GUI and bridge continue using the validated `STATE` and `ACTION` text
+  protocol over `\\.\pipe\Hotd2RemakeTrainer`.
+
+GitHub's manual release workflow follows the Dead Space trainer pattern: it
+builds and tests the GUI on `windows-latest`, keeps the committed bridge DLL
+that requires local game assemblies to compile, selects the next patch version,
+and publishes both files.
 
 Build and deploy the bridge to the default game path:
 
