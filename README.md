@@ -1,85 +1,60 @@
 # The House of the Dead 2: Remake Trainer
 
+A Windows trainer for the Steam version of **THE HOUSE OF THE DEAD 2: Remake**, by `vholf`.
+
 ![The House of the Dead 2: Remake logo](assets/hotd2-remake-logo.png)
 
-Portable Windows trainer for **THE HOUSE OF THE DEAD 2: Remake**. Instead of
-patching raw game memory like a conventional standalone trainer, it loads a
-small BepInEx bridge into the game. This lets it use the game's built-in cheat
-system while the separate GUI only controls the options.
+Unlike a conventional standalone trainer, this project uses a small BepInEx
+bridge to control the game's built-in cheat system. This also makes cheats
+persistent: enable **Remember gameplay cheats across game restarts** once and
+the bridge restores them on later game launches without starting the trainer
+GUI again.
 
-The bridge also owns persistence. Enable **Remember gameplay cheats across game
-restarts**, choose the options once, and the bridge restores them on every
-later game launch; the trainer GUI does not need to be started again. No Cheat
-Engine or process-memory editor is required.
-
-The GUI uses the reusable `Vholf.Trainer.UI` WPF shell shared with other
-`vholf` trainers. Game-specific controls and BepInEx communication remain in
-this repository.
-
-![HotD2 Remake trainer interface](assets/trainer-ui.png)
-
-## Features
-
-- Infinite Health
-- Infinite Ammo
-- Infinite Continues
-- One Shot Mode
-- Easy Boss Mode
-- Zero Damage
-- All Weapons Unlocked
-- Auto Fire at the weapon's native maximum rate
-- Adjustable Rapid Fire from 2 to 16 shots per second
-- Unlock all chapters, bestiary, training modes, boss modes, stars, trunk
-  items, and achievements
-- Optional gameplay-cheat persistence across game and trainer restarts
+![The House of the Dead 2: Remake trainer](assets/trainer-ui.png)
 
 ## Requirements
 
-- Windows version of **THE HOUSE OF THE DEAD 2: Remake**
+- 64-bit Windows
+- THE HOUSE OF THE DEAD 2: Remake on Steam
 - 64-bit [BepInEx 5.4.22](https://github.com/BepInEx/BepInEx/releases/download/v5.4.22/BepInEx_x64_5.4.22.0.zip)
 
-Use BepInEx 5 x64. Do not install the x86 package or BepInEx 6.
+Cheat Engine is not required. Use BepInEx 5 x64, not BepInEx 6 or the x86
+package.
 
-## Install BepInEx
+## Download
+
+Download `Hotd2RemakeTrainer.exe` and `Hotd2TrainerBridge.dll` from the
+repository's [Releases](https://github.com/fjdiazt/thotd2remake-trainer/releases)
+page. Both files must come from the same release.
+
+## Install
 
 1. In Steam, right-click the game and select **Manage > Browse local files**.
-2. Download the BepInEx archive linked above.
-3. Extract the archive directly into the folder containing
+2. Extract BepInEx directly into the folder containing
    `THE HOUSE OF THE DEAD 2 Remake.exe`.
-4. Confirm the game folder now contains:
-
-   ```text
-   BepInEx\
-   doorstop_config.ini
-   winhttp.dll
-   THE HOUSE OF THE DEAD 2 Remake.exe
-   ```
-
-5. Start the game once, reach the menu, then close it. BepInEx creates its
-   remaining folders and configuration files during this first run.
-
-`winhttp.dll` must keep that exact filename. Renaming or removing it disables
-BepInEx.
-
-## Install the trainer
-
-1. Download or clone this repository.
-2. Copy `dist\Hotd2TrainerBridge.dll` to:
+3. Start the game once, reach the menu, then close it. This creates the BepInEx
+   folders.
+4. Copy `Hotd2TrainerBridge.dll` to:
 
    ```text
    <game folder>\BepInEx\plugins\Hotd2TrainerBridge.dll
    ```
 
-3. Keep `dist\Hotd2RemakeTrainer.exe` anywhere convenient.
-4. Fully restart the game after installing or replacing the bridge DLL.
+5. Keep `Hotd2RemakeTrainer.exe` anywhere convenient.
+6. Fully restart the game after installing or replacing the bridge DLL.
 
-## Run
+The game folder must contain `winhttp.dll` with that exact filename. Renaming
+or removing it disables BepInEx.
 
-Start `Hotd2RemakeTrainer.exe` before or after starting the game. The status
-changes to **Connected to Remake** when the in-game bridge is ready.
+## Use
 
-If the trainer is opened first, it waits for the game. Options selected before
-the connection are sent to the bridge when the game starts.
+1. Start THE HOUSE OF THE DEAD 2: Remake through Steam.
+2. Run `Hotd2RemakeTrainer.exe`.
+3. Wait for **Connected to Remake**.
+4. Enable the options you want.
+
+The trainer may also be opened first. It waits for the game and sends your
+selected options when the bridge connects.
 
 ## Options
 
@@ -94,45 +69,39 @@ the connection are sent to the bridge when the game starts.
 | All Weapons Unlocked | Makes every weapon available while enabled. |
 | Off | Disables both automatic fire modes. |
 | Auto Fire (native max) | Holding the trigger uses the game's built-in automatic-fire loop at the weapon's native maximum cadence. |
-| Rapid Fire | Holding the trigger repeats the normal fire action at the selected 2-16 shots-per-second rate. Native ammo, reload, blocking, and weapon cooldown rules still apply. |
-| Remember gameplay cheats across game restarts | Saves gameplay and fire-mode options in the bridge and restores them the next time the game starts. |
+| Rapid Fire | Holding the trigger repeats normal fire at the selected 2-16 shots-per-second rate while preserving ammo, reload, blocking, and cooldown rules. |
+| Remember gameplay cheats across game restarts | Saves gameplay and fire-mode options in the bridge and restores them when the game starts. |
 
 Auto Fire and Rapid Fire are mutually exclusive. Rapid Fire does not modify
-per-shot damage; any faster enemy kills come from firing more often.
+per-shot damage.
 
 ### Progression unlocks
 
-The right-hand buttons invoke the game's built-in unlock actions for:
+The trainer can unlock all chapters, bestiary entries, training modes, boss
+modes, stars, trunk items, and achievements through the game's built-in
+actions.
 
-- all chapters and the bestiary;
-- training modes, with a separate option for all stars;
-- boss modes, with a separate option for all stars;
-- all trunk items;
-- all achievements.
-
-Unlock actions can modify game save progress and cannot be undone by the trainer.
-The achievements button shows an additional confirmation because it may also
-permanently unlock platform achievements. These actions are separate from the
-gameplay-cheat persistence checkbox.
+Unlocks modify save progress and cannot be undone by the trainer. Unlocking
+achievements may also permanently unlock platform achievements, so the trainer
+asks for confirmation first.
 
 ## Persistence
 
 With **Remember gameplay cheats across game restarts** enabled:
 
-- closing the GUI leaves the selected cheats active;
+- closing the GUI leaves selected cheats active;
 - starting the game restores them without opening the GUI;
 - reopening the GUI synchronizes its controls from the bridge.
 
 With persistence disabled, closing the GUI turns all trainer options off.
 
-Saved state is stored in:
+Bridge state is saved in:
 
 ```text
 <game folder>\BepInEx\config\local.hotd2remake.trainerbridge.cfg
 ```
 
-The GUI also remembers its last control state, including choices made before
-the game starts, in:
+GUI state is saved in:
 
 ```text
 %LOCALAPPDATA%\vholf\Hotd2RemakeTrainer\settings.json
@@ -140,33 +109,18 @@ the game starts, in:
 
 ## Troubleshooting
 
-### Waiting for Remake
-
-The game process was not found. Start the Remake and confirm the executable is
-named `THE HOUSE OF THE DEAD 2 Remake.exe`.
-
-### Game found; BepInEx bridge offline
-
-The game is running, but the plugin did not load.
-
-1. Close the game completely.
-2. Confirm `winhttp.dll` exists beside the game executable.
-3. Confirm `Hotd2TrainerBridge.dll` exists in `BepInEx\plugins`.
-4. Start the game again.
-
-The bridge loads only when the game starts. Replacing its DLL while the game is
-already running requires a full game restart.
-
-### GUI and bridge do not connect after an update
-
-Use `Hotd2RemakeTrainer.exe` and `Hotd2TrainerBridge.dll` from the same build.
-The two files share a state protocol and should be updated together.
+- **Waiting for Remake:** start the game and leave the trainer open.
+- **Game found; BepInEx bridge offline:** fully restart the game, then confirm
+  `winhttp.dll` is beside the game executable and `Hotd2TrainerBridge.dll` is
+  inside `BepInEx\plugins`.
+- **GUI and bridge do not connect after an update:** download both files from
+  the same release and restart the game.
+- **Option unavailable:** restart both the game and trainer, then try again.
 
 ## Build from source
 
-Release binaries in `dist` need no developer tools. Building requires the
-.NET 8 SDK and a local game installation. The GUI pins the published
-`Vholf.Trainer.UI` package at version `0.1.0-ci.3`.
+Building requires the .NET 8 SDK and a local game installation. The GUI uses
+the published `Vholf.Trainer.UI` package version `0.1.0-ci.3`.
 
 ```powershell
 .\build.ps1
@@ -179,34 +133,29 @@ dist\Hotd2RemakeTrainer.exe
 dist\Hotd2TrainerBridge.dll
 ```
 
-The build runs the protocol/session tests, publishes the WPF GUI as a
-self-contained Windows x64 single-file executable, then builds the BepInEx
-bridge. MSVC and a separately installed .NET runtime are not required.
-
-## Architecture
-
-- `src\Hotd2RemakeTrainer.App`: HotD-specific WPF panel, saved GUI state,
-  process detection, and named-pipe session.
-- `Vholf.Trainer.UI` `0.1.0-ci.3`: reusable window chrome, artwork panel,
-  status presentation, and consumer-content host.
-- `Hotd2TrainerBridge.cs`: in-game BepInEx plugin that owns cheat execution and
-  persistent gameplay state.
-- The GUI and bridge continue using the validated `STATE` and `ACTION` text
-  protocol over `\\.\pipe\Hotd2RemakeTrainer`.
-
-GitHub's manual release workflow follows the Dead Space trainer pattern: it
-builds and tests the GUI on `windows-latest`, keeps the committed bridge DLL
-that requires local game assemblies to compile, selects the next patch version,
-and publishes both files.
-
 Build and deploy the bridge to the default game path:
 
 ```powershell
 .\build.ps1 -Deploy
 ```
 
-For another Steam library, supply the game folder:
+Use `-GameRoot` for another Steam library.
 
-```powershell
-.\build.ps1 -GameRoot 'D:\SteamLibrary\steamapps\common\THE HOUSE OF THE DEAD 2 Remake' -Deploy
-```
+The manual GitHub release workflow builds and tests the GUI on Windows,
+selects the next patch version, and publishes both release files. The committed
+bridge DLL is used because compiling it requires assemblies from a local game
+installation.
+
+## Architecture
+
+- `src\Hotd2RemakeTrainer.App`: game-specific WPF controls, saved GUI state,
+  process detection, and named-pipe session.
+- `Vholf.Trainer.UI`: shared window chrome, artwork, and status presentation.
+- `Hotd2TrainerBridge.cs`: in-game BepInEx plugin that executes and persists
+  cheats.
+- GUI and bridge communicate over `\\.\pipe\Hotd2RemakeTrainer` using the
+  `STATE` and `ACTION` protocol.
+
+## Disclaimer
+
+Use at your own risk. This trainer is intended for offline, single-player use.
